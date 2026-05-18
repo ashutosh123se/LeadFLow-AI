@@ -17,7 +17,7 @@ jobs:
       - name: Setup Node.js Context
         uses: actions/setup-node@v4
         with:
-          node-id: 20
+          node-version: 20
           cache: 'npm'
           cache-dependency-path: |
             backend/package.json
@@ -42,10 +42,9 @@ jobs:
         run: |
           cd frontend
           npm ci
-          npm run build
+          NODE_ENV=production npm run build
         env:
           NEXT_PUBLIC_API_URL: https://api.leadflowai.com/api/v1
-          NODE_ENV: production
 
       # 3. Simulate VPS Server Restart via PM2
       - name: Deploy to VPS Cluster
