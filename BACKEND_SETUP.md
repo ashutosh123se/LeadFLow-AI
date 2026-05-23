@@ -1,4 +1,4 @@
-# Backend Setup Guide — What You Need to Run LeadLFlowAI
+# Backend Setup Guide — What You Need to Run LeadFlow-AI
 
 ## ✅ Step 1 — Prisma Client (Already Done)
 `npx prisma generate` has been run successfully. The Prisma Client is ready.
@@ -155,7 +155,7 @@ RAZORPAY_WEBHOOK_SECRET=your-webhook-secret
 ```env
 SENDGRID_API_KEY=SG.xxxxxxxxxxxx
 FROM_EMAIL=noreply@yourdomain.com
-FROM_NAME=LeadLFlowAI
+FROM_NAME=LeadFlow-AI
 ```
 
 ---

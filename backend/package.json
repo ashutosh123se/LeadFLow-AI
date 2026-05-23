@@ -1,7 +1,7 @@
 {
   "name": "leadflow-backend",
   "version": "1.0.0",
-  "description": "LeadLFlowAI Backend Service",
+  "description": "LeadFlow-AI Backend Service",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -26,6 +26,7 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^6.9.10",
+    "pg": "^8.21.0",
     "razorpay": "^2.9.2",
     "redis": "^4.6.13",
     "socket.io": "^4.7.4",

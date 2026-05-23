@@ -9,6 +9,7 @@ connectDB().then(() => {
   require('./callWorker');
   require('./whatsappWorker');
   require('./emailWorker');
+  require('./automationWorker');
 
   logger.info('All Bull queue workers started and listening for jobs.');
 }).catch((error) => {

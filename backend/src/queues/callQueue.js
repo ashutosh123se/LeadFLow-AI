@@ -1,7 +1,20 @@
 const Queue = require('bull');
 const logger = require('../utils/logger');
 
-const callQueue = new Queue('call-queue', process.env.REDIS_URL || 'redis://127.0.0.1:6379', {
+const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
+const redisOpts = {
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+};
+
+if (redisUrl.startsWith('rediss:')) {
+  redisOpts.tls = {
+    rejectUnauthorized: false
+  };
+}
+
+const callQueue = new Queue('call-queue', redisUrl, {
+  redis: redisOpts,
   defaultJobOptions: {
     attempts: 3,
     backoff: {

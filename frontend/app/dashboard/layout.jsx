@@ -88,7 +88,7 @@ export default function DashboardLayout({ children }) {
             LF
           </div>
           <span className="font-bold text-sm bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
-            LeadLFlowAI
+            LeadFlow-AI
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -113,7 +113,7 @@ export default function DashboardLayout({ children }) {
           </div>
           <div>
             <span className="text-base font-extrabold tracking-tight bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
-              LeadLFlowAI
+              LeadFlow-AI
             </span>
             <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
               CRM Platform
@@ -176,7 +176,7 @@ export default function DashboardLayout({ children }) {
                 LF
               </div>
               <span className="font-bold text-sm bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
-                LeadLFlowAI
+                LeadFlow-AI
               </span>
             </div>
             <button onClick={() => setMobileMenuOpen(false)} className="text-slate-400 hover:text-slate-200">

@@ -6,6 +6,19 @@ const useNotificationStore = create((set, get) => ({
   notifications: [],
   socket: null,
 
+  addNotification: (notification) => {
+    set((state) => ({
+      notifications: [
+        {
+          id: Math.random().toString(36).substring(7),
+          time: new Date(),
+          ...notification,
+        },
+        ...state.notifications,
+      ],
+    }));
+  },
+
   initSocket: (orgId) => {
     if (get().socket) return;
 
@@ -26,28 +39,104 @@ const useNotificationStore = create((set, get) => ({
 
     // Real-time events
     socket.on('lead:created', (data) => {
-      toast.success(`New lead received: ${data.lead.name}`);
-      set((state) => ({
-        notifications: [
-          {
-            id: Math.random().toString(),
-            title: 'New Lead Captured',
-            message: `Lead "${data.lead.name}" captured from ${data.lead.source}`,
-            time: new Date(),
-          },
-          ...state.notifications,
-        ],
-      }));
+      const name = data.name || data.lead?.name || 'New Lead';
+      const source = data.source || data.lead?.source || 'Form';
+      const leadId = data.leadId || data.lead?.id;
+
+      toast.success(`New lead received: ${name} (${source})`);
+      
+      get().addNotification({
+        title: 'New Lead Captured',
+        message: `Lead "${name}" captured from ${source}`,
+      });
+
+      // Dynamically import to update leadStore
+      import('./leadStore').then((store) => {
+        if (leadId) {
+          store.default.getState().addLead({
+            id: leadId,
+            name,
+            source,
+            status: 'NEW',
+            createdAt: new Date(),
+            phone: data.phone || '',
+          });
+        }
+      });
+    });
+
+    socket.on('call:initiated', (data) => {
+      const name = data.leadName || 'Lead';
+      toast(`AI Call initiated for ${name}...`, { icon: '📞' });
+
+      get().addNotification({
+        title: 'AI Call Dialing',
+        message: `Calling lead ${name} (${data.phone})`,
+      });
+
+      import('./leadStore').then((store) => {
+        store.default.getState().updateLead({
+          id: data.leadId,
+          status: 'CONTACTED',
+          lastContactedAt: new Date(),
+        });
+      });
+    });
+
+    socket.on('call:failed', (data) => {
+      toast.error(`Call failed: ${data.reason || 'Unreachable'}`);
+      
+      get().addNotification({
+        title: 'AI Call Failed',
+        message: `Failed to qualify: ${data.reason || 'Unknown error'}`,
+      });
     });
 
     socket.on('call:completed', (data) => {
-      const { scoreLabel, score, summary } = data;
-      const msg = `AI Call done — Lead scored ${score}/100 (${scoreLabel}). ${summary || ''}`;
+      const { leadId, score, scoreLabel, summary } = data;
+      const msg = `AI Call complete. Lead score: ${score}/100 [${scoreLabel}]. ${summary || ''}`;
+      
       if (scoreLabel === 'HOT') {
         toast.success(msg, { duration: 6000 });
       } else {
-        toast(msg, { duration: 6000 });
+        toast(msg, { duration: 6000, icon: '📊' });
       }
+
+      get().addNotification({
+        title: `Lead Qualified: ${scoreLabel}`,
+        message: `AI call completed. Score: ${score}/100. ${summary || ''}`,
+      });
+
+      import('./leadStore').then((store) => {
+        store.default.getState().updateLead({
+          id: leadId,
+          score,
+          scoreLabel,
+          status: scoreLabel === 'HOT' || scoreLabel === 'WARM' ? 'QUALIFIED' : 'CONTACTED',
+          scoredAt: new Date(),
+          isQualified: scoreLabel === 'HOT' || scoreLabel === 'WARM',
+        });
+      });
+    });
+
+    socket.on('whatsapp:sent', (data) => {
+      toast.success(`WhatsApp message sent: ${data.templateName || 'Template'}`);
+    });
+
+    socket.on('whatsapp:received', (data) => {
+      toast(`WhatsApp response received from ${data.leadName || 'Lead'}`, { icon: '💬' });
+      
+      get().addNotification({
+        title: 'WhatsApp Response',
+        message: `Reply received: "${data.message}"`,
+      });
+
+      import('./leadStore').then((store) => {
+        store.default.getState().updateLead({
+          id: data.leadId,
+          lastContactedAt: new Date(),
+        });
+      });
     });
 
     set({ socket });

@@ -8,16 +8,17 @@ const emailQueue = require('../../queues/emailQueue');
 
 const verifyRazorpaySignature = (req, res, next) => {
   const signature = req.headers['x-razorpay-signature'];
-  const webhookSecret = razorpayConfig.webhookSecret || 'rzp_webhook_secret_placeholder';
+  const webhookSecret = razorpayConfig.webhookSecret || process.env.RAZORPAY_WEBHOOK_SECRET;
 
   if (!signature) {
     logger.warn('Razorpay webhook missing x-razorpay-signature');
     return res.status(400).send('Signature missing');
   }
 
+  const payload = req.rawBody ? req.rawBody : JSON.stringify(req.body);
   const expectedSignature = crypto
     .createHmac('sha256', webhookSecret)
-    .update(JSON.stringify(req.body))
+    .update(payload)
     .digest('hex');
 
   if (signature !== expectedSignature) {
@@ -66,7 +67,6 @@ router.post('/', verifyRazorpaySignature, async (req, res) => {
 
     switch (eventType) {
       case 'subscription.activated': {
-        // Resolve plan dynamically (map from Razorpay plan ID in production, fallback to Growth or Starter)
         const planId = 'GROWTH'; // default mapped plan
         const limit = planLimitsMap[planId] || 20;
 
@@ -98,16 +98,21 @@ router.post('/', verifyRazorpaySignature, async (req, res) => {
         if (ownerUser) {
           await emailQueue.add({
             to: ownerUser.email,
-            subject: 'Subscription Activated! - LeadLFlowAI',
-            text: `Hello ${ownerUser.name},\n\nYour LeadLFlowAI subscription for ${org.name} has been successfully activated. You have been credited with ${limit} AI outbound calls.`,
+            template: 'payment_receipt',
+            variables: {
+              companyName: org.name,
+              amount: '3499.00',
+              planName: 'Growth Plan',
+              transactionId: razorpaySubId
+            }
           });
         }
         break;
       }
 
       case 'subscription.charged': {
-        // Recurring charge succeeded - reset call limits
         const limit = planLimitsMap[org.plan] || 20;
+        const amountPaid = subscriptionObj.paid_count > 0 ? '3499.00' : '0.00';
 
         await prisma.organization.update({
           where: { id: org.id },
@@ -120,15 +125,19 @@ router.post('/', verifyRazorpaySignature, async (req, res) => {
         if (ownerUser) {
           await emailQueue.add({
             to: ownerUser.email,
-            subject: 'Payment Successful - LeadLFlowAI',
-            text: `Hello ${ownerUser.name},\n\nYour recurring subscription payment succeeded. Your monthly speed-to-lead AI call limits have been renewed.`,
+            template: 'payment_receipt',
+            variables: {
+              companyName: org.name,
+              amount: amountPaid,
+              planName: `${org.plan} Plan Renewal`,
+              transactionId: `renew-${razorpaySubId}-${Date.now()}`
+            }
           });
         }
         break;
       }
 
       case 'subscription.halted': {
-        // Payment failed repeatedly - suspend services
         await prisma.organization.update({
           where: { id: org.id },
           data: {
@@ -139,15 +148,15 @@ router.post('/', verifyRazorpaySignature, async (req, res) => {
         if (ownerUser) {
           await emailQueue.add({
             to: ownerUser.email,
-            subject: 'Urgent: Subscription Suspended - LeadLFlowAI',
-            text: `Hello ${ownerUser.name},\n\nYour recurring subscription payment failed multiple times. Automated outbound calling services have been suspended. Please update your payment method.`,
+            subject: 'Subscription Halted - Action Required',
+            text: `Hello ${ownerUser.name},\n\nYour Razorpay subscription payment failed multiple times. Your outbound calling services have been suspended. Please log in and resolve your subscription billing.`,
+            html: `<h3>Payment Failed - Subscription Halted</h3><p>Hello ${ownerUser.name},</p><p>We tried to charge your payment method for subscription <strong>${razorpaySubId}</strong>, but it failed multiple times. Your LeadFlow-AI outbound calling services are suspended.</p><p>Please update your billing credentials on the dashboard.</p>`
           });
         }
         break;
       }
 
       case 'subscription.cancelled': {
-        // Downgrade to free/starter
         await prisma.organization.update({
           where: { id: org.id },
           data: {
@@ -161,8 +170,9 @@ router.post('/', verifyRazorpaySignature, async (req, res) => {
         if (ownerUser) {
           await emailQueue.add({
             to: ownerUser.email,
-            subject: 'Subscription Cancelled - LeadLFlowAI',
-            text: `Hello ${ownerUser.name},\n\nYour subscription has been cancelled. Your account has been downgraded to the Starter plan.`,
+            subject: 'LeadFlow-AI Subscription Cancelled',
+            text: `Hello ${ownerUser.name},\n\nYour premium subscription has been cancelled and downgraded to the Starter tier.`,
+            html: `<h3>Subscription Downgraded</h3><p>Hello ${ownerUser.name},</p><p>Your subscription has been cancelled. Your workspace limits have been downgraded to the Starter tier (20 free call qualification limit).</p>`
           });
         }
         break;
@@ -174,7 +184,7 @@ router.post('/', verifyRazorpaySignature, async (req, res) => {
 
     res.sendStatus(200);
   } catch (error) {
-    logger.error('Razorpay Webhook handler error:', error);
+    logger.error('Razorpay Webhook handler error:', error.message);
     res.sendStatus(500);
   }
 });

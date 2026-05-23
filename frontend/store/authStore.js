@@ -51,7 +51,7 @@ const useAuthStore = create((set, get) => ({
     }
   },
 
-  register: async (companyName, name, email, phone, password, industry) => {
+  register: async (companyName, name, email, phone, password, industry, metadata = {}) => {
     set({ loading: true });
     try {
       const response = await api.post('/auth/register', {
@@ -61,6 +61,8 @@ const useAuthStore = create((set, get) => ({
         phone,
         password,
         industry,
+        aiCallerLanguage: metadata.aiLang,
+        aiCallerVoice: metadata.aiVoice,
       });
       if (response.success) {
         const { accessToken, user } = response.data;

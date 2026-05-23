@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Lock, Mail, Loader2, ArrowRight } from 'lucide-react';
@@ -9,8 +9,17 @@ import useAuthStore from '../../../store/authStore';
 
 export default function LoginPage() {
   const router = useRouter();
-  const login = useAuthStore((state) => state.login);
-  const loading = useAuthStore((state) => state.loading);
+  const { login, loading, init, isAuthenticated } = useAuthStore();
+
+  useEffect(() => {
+    init();
+  }, [init]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.push('/dashboard');
+    }
+  }, [isAuthenticated, router]);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -45,7 +54,7 @@ export default function LoginPage() {
               LF
             </div>
             <span className="text-xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
-              LeadLFlowAI
+              LeadFlow-AI
             </span>
           </Link>
           <h2 className="text-2xl font-bold">Welcome Back</h2>

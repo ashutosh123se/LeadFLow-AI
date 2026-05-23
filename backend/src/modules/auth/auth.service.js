@@ -11,7 +11,7 @@ const tokenStore = new Map();
 
 class AuthService {
   static async register(data) {
-    const { companyName, name, email, phone, password, industry } = data;
+    const { companyName, name, email, phone, password, industry, aiCallerLanguage, aiCallerVoice } = data;
 
     // Check if email already registered in organization context
     const existingUser = await prisma.user.findFirst({
@@ -37,6 +37,8 @@ class AuthService {
           plan: 'STARTER',
           aiCallsLimit: 20,
           aiCallsUsed: 0,
+          aiCallerLanguage: aiCallerLanguage || 'hindi',
+          aiCallerVoice: aiCallerVoice || 'meera',
         },
       });
 
@@ -128,9 +130,9 @@ class AuthService {
     // 7. Add Onboarding Welcome Email to queue
     await emailQueue.add({
       to: email,
-      subject: `Welcome to LeadLFlowAI, ${name}!`,
-      text: `Hello ${name},\n\nThank you for choosing LeadLFlowAI! Your account for ${companyName} has been created.\n\nEnjoy qualifying leads in 90 seconds!`,
-      html: `<h3>Welcome to LeadLFlowAI!</h3><p>Hello ${name},</p><p>Thank you for choosing LeadLFlowAI! Your account for <strong>${companyName}</strong> has been successfully created.</p><p>Explore your dashboard, activate your AI caller, and start qualifying leads in 90 seconds!</p><p>Best regards,<br/>The LeadLFlowAI Team</p>`,
+      subject: `Welcome to LeadFlow-AI, ${name}!`,
+      text: `Hello ${name},\n\nThank you for choosing LeadFlow-AI! Your account for ${companyName} has been created.\n\nEnjoy qualifying leads in 90 seconds!`,
+      html: `<h3>Welcome to LeadFlow-AI!</h3><p>Hello ${name},</p><p>Thank you for choosing LeadFlow-AI! Your account for <strong>${companyName}</strong> has been successfully created.</p><p>Explore your dashboard, activate your AI caller, and start qualifying leads in 90 seconds!</p><p>Best regards,<br/>The LeadFlow-AI Team</p>`,
     });
 
     // 8. Generate Tokens
@@ -256,7 +258,7 @@ class AuthService {
     // Enqueue email
     await emailQueue.add({
       to: email,
-      subject: 'Reset your LeadLFlowAI Password',
+      subject: 'Reset your LeadFlow-AI Password',
       text: `Your OTP for password reset is: ${otp}. It will expire in 15 minutes.`,
       html: `<h3>Password Reset Requested</h3><p>Your OTP for resetting password is: <strong>${otp}</strong>.</p><p>This OTP will expire in 15 minutes.</p>`,
     });
@@ -309,9 +311,9 @@ class AuthService {
     const inviteUrl = `https://app.leadflowai.com/accept-invite?token=${token}`;
     await emailQueue.add({
       to: email,
-      subject: 'Invitation to join LeadLFlowAI team',
-      text: `You have been invited to join your team on LeadLFlowAI as a ${role}. Accept invitation: ${inviteUrl}`,
-      html: `<h3>You're Invited!</h3><p>You have been invited to join your team on <strong>LeadLFlowAI</strong> as an <strong>${role}</strong>.</p><p><a href="${inviteUrl}" style="padding: 10px 15px; background: #6366f1; color: white; text-decoration: none; border-radius: 5px;">Accept Invitation</a></p>`,
+      subject: 'Invitation to join LeadFlow-AI team',
+      text: `You have been invited to join your team on LeadFlow-AI as a ${role}. Accept invitation: ${inviteUrl}`,
+      html: `<h3>You're Invited!</h3><p>You have been invited to join your team on <strong>LeadFlow-AI</strong> as an <strong>${role}</strong>.</p><p><a href="${inviteUrl}" style="padding: 10px 15px; background: #6366f1; color: white; text-decoration: none; border-radius: 5px;">Accept Invitation</a></p>`,
     });
 
     logger.info(`Invitation generated for ${email} in org ${orgId}`);

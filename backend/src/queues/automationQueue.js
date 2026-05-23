@@ -13,7 +13,7 @@ if (redisUrl.startsWith('rediss:')) {
   };
 }
 
-const emailQueue = new Queue('email-queue', redisUrl, {
+const automationQueue = new Queue('automation-queue', redisUrl, {
   redis: redisOpts,
   defaultJobOptions: {
     attempts: 3,
@@ -26,12 +26,12 @@ const emailQueue = new Queue('email-queue', redisUrl, {
   },
 });
 
-emailQueue.on('failed', (job, err) => {
-  logger.error(`Bull emailQueue job failed: ID=${job.id}, error=${err.message}`);
+automationQueue.on('failed', (job, err) => {
+  logger.error(`Bull automationQueue job failed: ID=${job.id}, error=${err.message}`);
 });
 
-emailQueue.on('completed', (job) => {
-  logger.info(`Bull emailQueue job completed: ID=${job.id}`);
+automationQueue.on('completed', (job) => {
+  logger.info(`Bull automationQueue job completed: ID=${job.id}`);
 });
 
-module.exports = emailQueue;
+module.exports = automationQueue;

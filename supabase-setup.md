@@ -1,4 +1,4 @@
-# Supabase Setup Instructions for LeadLFlowAI
+# Supabase Setup Instructions for LeadFlow-AI
 
 Follow these steps to set up your Supabase database and prepare it for use with Prisma:
 
@@ -6,7 +6,7 @@ Follow these steps to set up your Supabase database and prepare it for use with 
 1. Go to [supabase.com](https://supabase.com) and sign in or create an account.
 2. Click **New Project** and select your organization.
 3. Set your project details:
-   - **Name**: `LeadLFlowAI`
+   - **Name**: `LeadFlow-AI`
    - **Password**: Generate a secure database password and save it in a safe place.
    - **Region**: Select **Southeast Asia (Singapore)** or **Mumbai (ap-south-1)** if available, to ensure lowest latency for users in India.
 4. Click **Create new project** and wait for provisioning to complete.

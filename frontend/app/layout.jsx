@@ -5,7 +5,7 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata = {
-  title: 'LeadLFlowAI — India\'s First 90-Second AI CRM',
+  title: 'LeadFlow-AI — India\'s First 90-Second AI CRM',
   description: 'Automatically call and qualify your B2B leads in Hindi or English in 90 seconds. Close more deals without hiring more people.',
 };
 

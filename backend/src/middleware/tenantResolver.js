@@ -1,36 +1,39 @@
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
+const { verifyAccessToken } = require('../utils/jwt');
 const ApiError = require('../utils/ApiError');
-const { prisma } = require('../config/db');
+const asyncHandler = require('../utils/asyncHandler');
 
-const resolveTenant = async (req, res, next) => {
-  try {
-    const orgToken = req.params.orgToken || req.query.orgToken || req.headers['x-org-token'];
-
-    if (!orgToken) {
-      throw new ApiError(400, 'Organization token is required.');
-    }
-
-    // Find the organization by token (using ID or Slug or a custom token. Let's use Organization slug or ID)
-    const organization = await prisma.organization.findFirst({
-      where: {
-        OR: [
-          { id: orgToken },
-          { slug: orgToken },
-        ],
-        isActive: true,
-      },
-    });
-
-    if (!organization) {
-      throw new ApiError(404, 'Organization not found or is currently inactive.');
-    }
-
-    req.organizationId = organization.id;
-    req.organization = organization;
-
-    next();
-  } catch (error) {
-    next(error);
+const tenantResolver = asyncHandler(async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    throw new ApiError(401, 'No token provided');
   }
-};
+  const token = authHeader.split(' ')[1];
+  const decoded = verifyAccessToken(token);
+  if (!decoded || !decoded.userId) {
+    throw new ApiError(401, 'Invalid token payload');
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: decoded.userId },
+    include: { organization: true }
+  });
+  if (!user || !user.isActive) {
+    throw new ApiError(401, 'User not found or inactive');
+  }
+  if (!user.organization || !user.organization.isActive) {
+    throw new ApiError(403, 'Organization suspended or inactive');
+  }
+  req.user = {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    organizationId: user.organizationId,
+    organization: user.organization
+  };
+  req.organizationId = user.organizationId;
+  next();
+});
 
-module.exports = resolveTenant;
+module.exports = tenantResolver;

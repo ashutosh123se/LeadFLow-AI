@@ -25,9 +25,13 @@ const integrationRoutes = require('./modules/integrations/integration.routes');
 const exotelWebhook = require('./modules/webhooks/exotel.webhook');
 const whatsappWebhook = require('./modules/webhooks/whatsapp.webhook');
 const razorpayWebhook = require('./modules/webhooks/razorpay.webhook');
+const indiamartWebhook = require('./modules/webhooks/indiamart.webhook');
+const justdialWebhook = require('./modules/webhooks/justdial.webhook');
+const facebookWebhook = require('./modules/webhooks/facebook.webhook');
+const zapierWebhook = require('./modules/webhooks/zapier.webhook');
 
 // Public lead capture
-const resolveTenant = require('./middleware/tenantResolver');
+const publicTenantResolver = require('./middleware/publicTenantResolver');
 const LeadService = require('./modules/leads/lead.service');
 const ApiResponse = require('./utils/ApiResponse');
 const { captureLimiter } = require('./middleware/rateLimiter');
@@ -68,9 +72,13 @@ app.get('/healthz', (req, res) => {
 app.use('/api/v1/webhooks/exotel', exotelWebhook);
 app.use('/api/v1/webhooks/whatsapp', whatsappWebhook);
 app.use('/api/v1/webhooks/razorpay', razorpayWebhook);
+app.use('/api/v1/webhooks/indiamart', indiamartWebhook);
+app.use('/api/v1/webhooks/justdial', justdialWebhook);
+app.use('/api/v1/webhooks/facebook', facebookWebhook);
+app.use('/api/v1/webhooks/zapier', zapierWebhook);
 
 // 2. EMBEDDABLE PUBLIC LEAD CAPTURE
-app.post('/api/v1/capture/:orgToken', captureLimiter, resolveTenant, async (req, res, next) => {
+app.post('/api/v1/capture/:orgToken', captureLimiter, publicTenantResolver, async (req, res, next) => {
   try {
     const { name, phone, email, requirement, budget, consentGiven } = req.body;
 

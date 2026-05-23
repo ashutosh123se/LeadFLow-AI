@@ -3,7 +3,7 @@ version: '3.8'
 services:
   redis:
     image: redis:7-alpine
-    container_name: leadflow-redis
+    container_name: leadflow-ai-redis
     ports:
       - "6379:6379"
     volumes:
@@ -11,24 +11,11 @@ services:
     restart: unless-stopped
     command: redis-server --appendonly yes
 
-  postgres:
-    image: postgres:15-alpine
-    container_name: leadflow-postgres
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: supersecretpassword
-      POSTGRES_DB: leadflow
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
-
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: leadflow-backend
+    container_name: leadflow-ai-backend
     ports:
       - "5000:5000"
     env_file:
@@ -41,7 +28,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: leadflow-frontend
+    container_name: leadflow-ai-frontend
     ports:
       - "3000:3000"
     env_file:
@@ -52,4 +39,4 @@ services:
 
 volumes:
   redis_data:
-  postgres_data:
+

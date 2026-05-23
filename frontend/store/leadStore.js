@@ -89,6 +89,66 @@ const useLeadStore = create((set, get) => ({
       return { success: false, error: error.message };
     }
   },
+
+  addLead: (lead) => {
+    set((state) => {
+      // Avoid duplicates
+      if (state.leads.some((l) => l.id === lead.id)) {
+        return {};
+      }
+      const updatedLeads = [lead, ...state.leads];
+      const updatedStages = state.stages.map((stage) => {
+        // Optimistically put in stage matching stageId
+        if (stage.id === lead.stageId || (!lead.stageId && stage.order === 1)) {
+          return {
+            ...stage,
+            leads: [lead, ...stage.leads],
+          };
+        }
+        return stage;
+      });
+      return { leads: updatedLeads, stages: updatedStages };
+    });
+  },
+
+  updateLead: (updatedLead) => {
+    set((state) => {
+      const activeLead = state.activeLead && state.activeLead.id === updatedLead.id
+        ? { ...state.activeLead, ...updatedLead }
+        : state.activeLead;
+
+      const leads = state.leads.map((l) => (l.id === updatedLead.id ? { ...l, ...updatedLead } : l));
+
+      // Remove and re-add in case stageId changed, or just swap if stage is the same
+      const stages = state.stages.map((stage) => {
+        const contains = stage.leads.some((l) => l.id === updatedLead.id);
+        const belongs = stage.id === updatedLead.stageId;
+
+        if (contains && belongs) {
+          // just update attributes
+          return {
+            ...stage,
+            leads: stage.leads.map((l) => (l.id === updatedLead.id ? { ...l, ...updatedLead } : l)),
+          };
+        } else if (contains && !belongs) {
+          // remove from this stage
+          return {
+            ...stage,
+            leads: stage.leads.filter((l) => l.id !== updatedLead.id),
+          };
+        } else if (!contains && belongs) {
+          // add to this stage
+          return {
+            ...stage,
+            leads: [updatedLead, ...stage.leads],
+          };
+        }
+        return stage;
+      });
+
+      return { activeLead, leads, stages };
+    });
+  },
 }));
 
 export default useLeadStore;

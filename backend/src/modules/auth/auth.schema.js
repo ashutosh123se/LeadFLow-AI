@@ -8,6 +8,8 @@ const registerSchema = {
     phone: z.string().regex(/^[6-9]\d{9}$/, 'Invalid Indian phone number (10 digits starting with 6-9)'),
     password: z.string().min(8, 'Password must be at least 8 characters'),
     industry: z.string().optional(),
+    aiCallerLanguage: z.string().optional(),
+    aiCallerVoice: z.string().optional(),
   }),
 };
 

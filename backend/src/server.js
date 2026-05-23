@@ -22,7 +22,7 @@ const startServer = async () => {
     // 4. Start HTTP Server listening on port
     server.listen(PORT, () => {
       logger.info(`===================================================`);
-      logger.info(`  LeadLFlowAI Master Server is running on port ${PORT}`);
+      logger.info(`  LeadFlow-AI Master Server is running on port ${PORT}`);
       logger.info(`  Client URL: ${process.env.CLIENT_URL || 'https://app.leadflowai.com'}`);
       logger.info(`  API Prefix: ${process.env.API_PREFIX || '/api/v1'}`);
       logger.info(`  Environment: ${process.env.NODE_ENV || 'development'}`);
