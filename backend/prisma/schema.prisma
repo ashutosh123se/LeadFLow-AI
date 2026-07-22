@@ -1,0 +1,566 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORGANIZATION — The multi-tenant container
+// ─────────────────────────────────────────────────────────────────────────────
+model Organization {
+  id                  String    @id @default(uuid())
+  name                String
+  slug                String    @unique
+  logo                String?
+  industry            String?
+  // Legacy plan enum (kept for backward-compat in Subscription model)
+  plan                PlanTier  @default(STARTER)
+  // FK to the new PlanDefinition table for rich plan data
+  planDefinitionId    String?
+  planDefinition      PlanDefinition? @relation(fields: [planDefinitionId], references: [id])
+  planExpiresAt       DateTime?
+  aiCallsUsed         Int       @default(0)
+  aiCallsLimit        Int       @default(20)
+  whatsappMsgUsed     Int       @default(0)
+  whatsappMsgLimit    Int       @default(100)
+  isActive            Boolean   @default(true)
+  razorpaySubId       String?
+  razorpayCustomerId  String?
+  whatsappToken       String?
+  whatsappPhoneId     String?
+  exotelApiKey        String?
+  exotelApiToken      String?
+  exotelSubdomain     String?
+  exotelCallerId      String?
+  aiCallerEnabled     Boolean   @default(false)
+  aiCallerLanguage    String    @default("hindi")
+  aiCallerVoice       String    @default("meera")
+  qualifyQuestions    Json?
+  scoringPrompt       String?   // Custom GPT scoring prompt per org
+  callingHoursStart   String    @default("09:00")
+  callingHoursEnd     String    @default("20:00")
+  timezone            String    @default("Asia/Kolkata")
+  workingDays         Json?     // e.g., [1,2,3,4,5] for Mon-Fri
+  defaultLanguage     String    @default("hindi")
+  maxConcurrentCalls  Int       @default(3) // per-org call concurrency limit
+  // Onboarding
+  onboardingStep      Int       @default(0) // 0=not started, 4=complete
+  onboardingComplete  Boolean   @default(false)
+  // Soft delete / suspension
+  suspendedAt         DateTime?
+  suspendedReason     String?
+  deletedAt           DateTime? // soft delete timestamp
+  // Dunning state
+  failedPaymentCount  Int       @default(0)
+  lastPaymentFailedAt DateTime?
+  // Timestamps
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  // Relations
+  users               User[]
+  leads               Lead[]
+  pipelines           Pipeline[]
+  calls               Call[]
+  whatsappMessages    WhatsappMessage[]
+  automations         Automation[]
+  integrations        Integration[]
+  subscriptions       Subscription[]
+  invoices            Invoice[]
+  auditLogs           AuditLog[]
+
+  @@index([planDefinitionId])
+}
+
+// Legacy enum — kept for backward compatibility in Subscription model
+enum PlanTier {
+  STARTER
+  GROWTH
+  PRO
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLAN DEFINITION — DB-driven subscription plans (replaces hardcoded plans)
+// ─────────────────────────────────────────────────────────────────────────────
+model PlanDefinition {
+  id                String    @id @default(uuid())
+  slug              String    @unique // STARTER, GROWTH, PRO, ENTERPRISE, etc.
+  name              String    // "Starter Plan", "Growth Plan", etc.
+  description       String?
+  priceMonthly      Float     // monthly price in INR
+  priceAnnual       Float?    // annual price in INR (discounted)
+  maxEmployees      Int       // max team members allowed
+  maxAiCalls        Int       // max AI calls per month
+  maxWhatsappMsg    Int       // max WhatsApp messages per month
+  maxLeads          Int       @default(999999) // max leads stored
+  featureFlags      Json      // { "metaAds": true, "googleAds": false, "customScoring": true, ... }
+  razorpayPlanIdMonthly  String?  // Razorpay plan ID for monthly billing
+  razorpayPlanIdAnnual   String?  // Razorpay plan ID for annual billing
+  isActive          Boolean   @default(true)
+  isPopular         Boolean   @default(false) // UI hint for "Most Popular" badge
+  trialDays         Int       @default(0)     // 0 = no trial, 7 or 14 for trial
+  displayOrder      Int       @default(0)     // sort order on pricing page
+  features          Json?     // Array of feature description strings for UI
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  organizations     Organization[]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// USER / EMPLOYEE — belongs to one Organization
+// ─────────────────────────────────────────────────────────────────────────────
+model User {
+  id                  String       @id @default(uuid())
+  organizationId      String
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                String
+  email               String
+  passwordHash        String
+  role                UserRole     @default(AGENT)
+  avatar              String?
+  phone               String?
+  isActive            Boolean      @default(true)
+  refreshTokenHash    String?
+  lastLoginAt         DateTime?
+  // Email verification
+  emailVerified       Boolean      @default(false)
+  emailVerifyToken    String?
+  emailVerifyExpiry   DateTime?
+  // Two-factor authentication
+  totpSecret          String?      // encrypted TOTP secret
+  is2FAEnabled        Boolean      @default(false)
+  // Timestamps
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  // Relations
+  assignedLeads       Lead[]       @relation("AssignedLeads")
+  activities          Activity[]
+  sessions            Session[]
+  notificationPrefs   NotificationPreference[]
+
+  @@unique([email, organizationId])
+  @@index([organizationId])
+  @@index([email])
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  OWNER
+  ADMIN
+  MANAGER
+  AGENT
+  VIEWER
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION — tracks active login sessions per user
+// ─────────────────────────────────────────────────────────────────────────────
+model Session {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceName  String?  // e.g., "Chrome on Windows 11"
+  ipAddress   String?
+  userAgent   String?
+  isActive    Boolean  @default(true)
+  lastActive  DateTime @default(now())
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PIPELINE & STAGES
+// ─────────────────────────────────────────────────────────────────────────────
+model Pipeline {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  isDefault      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  stages         Stage[]
+
+  @@index([organizationId])
+}
+
+model Stage {
+  id         String   @id @default(uuid())
+  pipelineId String
+  pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  name       String
+  color      String   @default("#6366f1")
+  order      Int
+  leads      Lead[]
+
+  @@index([pipelineId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LEAD — the prospect record
+// ─────────────────────────────────────────────────────────────────────────────
+model Lead {
+  id              String       @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignedToId    String?
+  assignedTo      User?        @relation("AssignedLeads", fields: [assignedToId], references: [id])
+  stageId         String?
+  stage           Stage?       @relation(fields: [stageId], references: [id])
+  name            String
+  email           String?
+  phone           String
+  whatsapp        String?
+  company         String?
+  source          LeadSource   @default(MANUAL)
+  sourceDetail    String?
+  budget          String?
+  timeline        String?
+  requirement     String?
+  location        String?
+  decisionMaker   Boolean?
+  additionalNotes String?
+  score           Int?
+  scoreLabel      ScoreLabel?
+  scoreReason     String?
+  scoredAt        DateTime?
+  scoredBy        String?      // "AI" or userId for manual scoring
+  status          LeadStatus   @default(NEW)
+  priority        Priority     @default(MEDIUM)
+  isQualified     Boolean      @default(false)
+  // Consent & compliance
+  consentGiven    Boolean      @default(false)
+  consentAt       DateTime?
+  consentText     String?      // The exact consent text shown, e.g., "I agree to be contacted..."
+  consentVersion  String?      // e.g., "v1.2"
+  // Opt-out tracking
+  optedOutAt      DateTime?
+  optedOutChannel String?      // "whatsapp", "sms", "all"
+  // DPDP compliance
+  dataDeletedAt   DateTime?
+  // Ad tracking
+  adCampaignId    String?      // which ad campaign brought this lead
+  adSetId         String?      // which ad set/group
+  adId            String?      // which specific ad
+  leadgenId       String?      // Meta leadgen_id or Google form response ID
+  // Timing
+  lastContactedAt DateTime?
+  nextFollowUpAt  DateTime?
+  closedAt        DateTime?
+  closedReason    String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  // Relations
+  calls            Call[]
+  whatsappMessages WhatsappMessage[]
+  activities       Activity[]
+  notes            Note[]
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, scoreLabel])
+  @@index([organizationId, source])
+  @@index([phone, organizationId])
+  @@index([organizationId, assignedToId])
+  @@index([organizationId, createdAt])
+}
+
+enum LeadSource {
+  MANUAL
+  WHATSAPP
+  WEBSITE_FORM
+  FACEBOOK_AD
+  INDIAMART
+  JUSTDIAL
+  GOOGLE_AD
+  REFERRAL
+  CSV_IMPORT
+  API
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL_SENT
+  NEGOTIATION
+  WON
+  LOST
+  UNQUALIFIED
+}
+
+enum ScoreLabel {
+  HOT
+  WARM
+  COLD
+  NEEDS_REVIEW
+}
+
+enum Priority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALL — AI calling pipeline records
+// ─────────────────────────────────────────────────────────────────────────────
+model Call {
+  id                 String        @id @default(uuid())
+  organizationId     String
+  organization       Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leadId             String
+  lead               Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  exotelCallSid      String?       @unique
+  direction          CallDirection @default(OUTBOUND)
+  fromNumber         String
+  toNumber           String
+  status             CallStatus    @default(INITIATED)
+  duration           Int?
+  recordingUrl       String?
+  recordingExpiresAt DateTime?     // auto-delete recording after this date
+  transcript         Json?
+  summary            String?
+  extractedData      Json?
+  aiScore            Int?
+  aiScoreLabel       ScoreLabel?
+  aiScoreReason      String?
+  language           String        @default("hindi")
+  // Cost tracking
+  costEstimate       Float?        // estimated cost in INR for this call
+  costBreakdown      Json?         // { "exotel": 1.5, "deepgram": 0.3, "openai": 0.8, "sarvam": 0.2 }
+  // Retry tracking
+  retryCount         Int           @default(0)
+  parentCallId       String?       // if this is a retry, link to the original call
+  // Manual review
+  needsManualReview  Boolean       @default(false)
+  reviewedAt         DateTime?
+  reviewedBy         String?       // userId who reviewed
+  // Timestamps
+  triggeredAt        DateTime      @default(now())
+  answeredAt         DateTime?
+  endedAt            DateTime?
+  createdAt          DateTime      @default(now())
+
+  @@index([organizationId])
+  @@index([leadId])
+  @@index([organizationId, createdAt])
+  @@index([status])
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum CallStatus {
+  INITIATED
+  RINGING
+  IN_PROGRESS
+  COMPLETED
+  NO_ANSWER
+  BUSY
+  FAILED
+  NEEDS_REVIEW
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WHATSAPP MESSAGES
+// ─────────────────────────────────────────────────────────────────────────────
+model WhatsappMessage {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leadId         String
+  lead           Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  waMessageId    String?      @unique
+  direction      String
+  type           String
+  content        String
+  templateName   String?
+  status         String       @default("sent") // sent, delivered, read, failed
+  failureReason  String?
+  sentAt         DateTime     @default(now())
+  deliveredAt    DateTime?
+  readAt         DateTime?
+  failedAt       DateTime?
+
+  @@index([organizationId])
+  @@index([leadId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTOMATION
+// ─────────────────────────────────────────────────────────────────────────────
+model Automation {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  isActive       Boolean      @default(true)
+  trigger        Json
+  steps          Json
+  executionCount Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACTIVITY — lead-scoped activity timeline
+// ─────────────────────────────────────────────────────────────────────────────
+model Activity {
+  id             String   @id @default(uuid())
+  organizationId String
+  leadId         String
+  lead           Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId         String?
+  user           User?    @relation(fields: [userId], references: [id])
+  type           String
+  description    String
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  @@index([leadId])
+  @@index([organizationId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE — freeform notes on leads
+// ─────────────────────────────────────────────────────────────────────────────
+model Note {
+  id        String   @id @default(uuid())
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  content   String
+  createdBy String?  // userId
+  createdAt DateTime @default(now())
+
+  @@index([leadId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUBSCRIPTION — billing subscription records
+// ─────────────────────────────────────────────────────────────────────────────
+model Subscription {
+  id                 String       @id @default(uuid())
+  organizationId     String
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  planDefinitionId   String?      // FK to PlanDefinition
+  plan               PlanTier     // Legacy enum for backward compat
+  status             String       // active, cancelled, paused, halted, trialing
+  amount             Float
+  currency           String       @default("INR")
+  billingInterval    String       @default("monthly") // monthly, annual
+  razorpaySubId      String?
+  razorpayPaymentId  String?
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  trialEndsAt        DateTime?
+  cancelledAt        DateTime?
+  createdAt          DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([razorpaySubId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INVOICE — payment records with PDF generation support
+// ─────────────────────────────────────────────────────────────────────────────
+model Invoice {
+  id                  String       @id @default(uuid())
+  organizationId      String
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoiceNumber       String       @unique // e.g., "LF-2026-00001"
+  subscriptionId      String?
+  // Amounts
+  subtotal            Float
+  taxRate             Float        @default(18) // GST percentage
+  taxAmount           Float        @default(0)
+  totalAmount         Float
+  currency            String       @default("INR")
+  // Status
+  status              String       @default("paid") // paid, pending, failed, refunded
+  // Razorpay
+  razorpayPaymentId   String?
+  razorpayInvoiceId   String?
+  // Invoice details
+  planName            String?
+  billingPeriodStart  DateTime
+  billingPeriodEnd    DateTime
+  invoicePdfUrl       String?
+  // Timestamps
+  paidAt              DateTime?
+  createdAt           DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDIT LOG — org-wide action tracking (separate from Activity which is lead-scoped)
+// ─────────────────────────────────────────────────────────────────────────────
+model AuditLog {
+  id              String       @id @default(uuid())
+  organizationId  String?
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+  userId          String?
+  userEmail       String?      // denormalized for quick display
+  action          String       // e.g., "auth.login", "lead.status_changed", "employee.removed"
+  entityType      String?      // "Lead", "User", "Organization", "Subscription"
+  entityId        String?
+  details         Json?        // additional context
+  ipAddress       String?
+  userAgent       String?
+  createdAt       DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTIFICATION PREFERENCE — per-user notification channel settings
+// ─────────────────────────────────────────────────────────────────────────────
+model NotificationPreference {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event           String   // "new_lead_assigned", "hot_lead_alert", "payment_failed", etc.
+  emailEnabled    Boolean  @default(true)
+  whatsappEnabled Boolean  @default(false)
+  inAppEnabled    Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, event])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTEGRATION — third-party connections per org
+// ─────────────────────────────────────────────────────────────────────────────
+model Integration {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  type           String       // facebook, google_ads, indiamart, justdial, zapier
+  isActive       Boolean      @default(true)
+  config         Json         // connection-specific config (tokens, page IDs, etc.)
+  webhookUrl     String?
+  oauthTokens    Json?        // { accessToken, refreshToken, expiresAt }
+  lastSyncAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([organizationId, type])
+}
