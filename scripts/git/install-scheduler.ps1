@@ -1,26 +1,23 @@
-# Install Windows Task Scheduler job for LeadFlow chunked commits
-# Runs Mon/Wed/Fri at 10:30 AM — 2 commits + push per run
+# Install Windows Task Scheduler job for LeadFlow daily commits
+# Runs every day at 10:30 AM — 1 commit + push per run
 
 param(
-    [string]$Schedule = "Mon,Wed,Fri",
     [string]$Time = "10:30"
 )
 
 $ErrorActionPreference = "Stop"
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $ScriptPath = Join-Path $PSScriptRoot "scheduled-commit.ps1"
 $TaskName = "LeadFlow-ScheduledGitCommits"
 
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`""
-$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Wednesday, Friday -At $Time
+$trigger = New-ScheduledTaskTrigger -Daily -At $Time
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description "LeadFlow: commit 2 queued changes and push to remote" -Force
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description "LeadFlow: one queued commit and push each day" -Force
 
 Write-Host "Scheduled task '$TaskName' installed."
-Write-Host "  Runs: $Schedule at $Time"
+Write-Host "  Runs: daily at $Time"
 Write-Host "  Script: $ScriptPath"
 Write-Host ""
-Write-Host "Test manually:  powershell -File `"$ScriptPath`""
-Write-Host "Dry run:        powershell -File `"$ScriptPath`" -DryRun"
+Write-Host "Test manually:  scripts\git\run-scheduled.cmd"
 Write-Host "Remove task:    Unregister-ScheduledTask -TaskName '$TaskName' -Confirm:`$false"

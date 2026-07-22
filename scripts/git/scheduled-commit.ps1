@@ -1,4 +1,4 @@
-# LeadFlow — scheduled chunked git commits
+# LeadFlow - scheduled chunked git commits
 # Usage: .\scripts\git\scheduled-commit.ps1 [-DryRun] [-Count 2] [-Push]
 
 param(
@@ -42,14 +42,14 @@ if ($pending.Count -eq 0) {
     Write-Host "All queued commits are done ($($state.totalCommitted) total)."
     $dirty = git status --porcelain 2>$null
     if ($dirty) {
-        Write-Host "Uncommitted changes remain — add new entries to commit-queue.json."
+        Write-Host "Uncommitted changes remain - add new entries to commit-queue.json."
         git status --short | Select-Object -First 20
     }
     exit 0
 }
 
 $batch = $pending | Select-Object -First $perRun
-Write-Host "Processing $($batch.Count) commit(s) ($($pending.Count) remaining in queue)..."
+Write-Host "Processing $($batch.Count) commit(s). $($pending.Count) left in queue."
 
 foreach ($item in $batch) {
     $existing = @()
@@ -58,14 +58,14 @@ foreach ($item in $batch) {
     }
 
     if ($existing.Count -eq 0) {
-        Write-Warning "Skipping '$($item.id)' — no files found."
+        Write-Warning "Skipping '$($item.id)' - no files found."
         $state.completed += $item.id
         continue
     }
 
     Write-Host ""
     Write-Host "--- Commit: $($item.id) ---"
-    Write-Host ($item.message.Split("`n")[0])
+    Write-Host ($item.message.Split([char]10)[0])
 
     if ($DryRun) {
         Write-Host "[DRY RUN] Would add: $($existing -join ', ')"
@@ -75,7 +75,7 @@ foreach ($item in $batch) {
     git add -- $existing
     $staged = git diff --cached --name-only
     if (-not $staged) {
-        Write-Warning "Nothing staged for '$($item.id)' — marking complete."
+        Write-Warning "Nothing staged for '$($item.id)' - marking complete."
         $state.completed += $item.id
         continue
     }
@@ -89,7 +89,10 @@ foreach ($item in $batch) {
         $env:GIT_COMMITTER_DATE = $timeStr
     }
 
-    git commit -m $item.message
+    $msgFile = Join-Path $env:TEMP "leadflow-commit-$($item.id).txt"
+    Set-Content -Path $msgFile -Value $item.message -Encoding UTF8
+    git commit -F $msgFile
+    Remove-Item $msgFile -ErrorAction SilentlyContinue
     Remove-Item Env:GIT_AUTHOR_DATE -ErrorAction SilentlyContinue
     Remove-Item Env:GIT_COMMITTER_DATE -ErrorAction SilentlyContinue
 
@@ -113,8 +116,8 @@ if (-not $DryRun) {
             git push origin $branch
         } else {
             Write-Host ""
-            Write-Host "No git remote — commits saved locally. Add with:"
-            Write-Host "  git remote add origin <your-repo-url>"
+            Write-Host "No git remote - commits saved locally."
+            Write-Host "Add remote: git remote add origin YOUR_REPO_URL"
         }
     }
 }

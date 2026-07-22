@@ -1,5 +1,5 @@
 {
-  "commitsPerRun": 2,
+  "commitsPerRun": 1,
   "pushAfterRun": true,
   "randomizeAuthorTime": true,
   "timeWindowHours": [9, 18],

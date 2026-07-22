@@ -4,7 +4,7 @@ Split project updates into small, realistic commits and push them on a regular s
 
 ## Why
 
-LeadFlow changes were bundled in one session. This queue breaks them into **12 logical commits** (~2 per scheduled run) so your GitHub activity shows steady, incremental progress.
+LeadFlow changes were bundled in one session. This queue breaks them into **15 logical commits** (1 per day) so your GitHub activity shows steady, incremental progress.
 
 ## Quick start
 
@@ -18,13 +18,13 @@ git branch -M main
 # 2. Preview next commits
 powershell -ExecutionPolicy Bypass -File scripts/git/scheduled-commit.ps1 -DryRun
 
-# 3. Run 2 commits now
-powershell -ExecutionPolicy Bypass -File scripts/git/scheduled-commit.ps1
+# 3. Run one commit now
+scripts\git\run-scheduled.cmd -Count 1
 
 # 4. Add GitHub remote (once)
 git remote add origin https://github.com/YOUR_USER/LeadFlow-AI.git
 
-# 5. Install Windows scheduler (Mon/Wed/Fri 10:30 AM)
+# 5. Install Windows scheduler (daily at 10:30 AM)
 powershell -ExecutionPolicy Bypass -File scripts/git/install-scheduler.ps1
 ```
 
@@ -52,7 +52,7 @@ Edit `commit-queue.json` to add future work. Track progress in `.commit-state.js
 | Flag | Description |
 |------|-------------|
 | `-DryRun` | Show what would commit without changing git |
-| `-Count 3` | Commit 3 items this run (default: 2) |
+| `-Count 3` | Commit 3 items this run (default: 1 per day) |
 | `-Push` | Force push even if `pushAfterRun` is false |
 
 ## Notes
