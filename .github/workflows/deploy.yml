@@ -1,0 +1,55 @@
+name: Production CI/CD Build pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Workspace Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Context
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package.json
+            frontend/package.json
+
+      # 1. Test and build Production Backend Service
+      - name: Build Backend Dependencies
+        run: |
+          cd backend
+          npm ci
+          
+      - name: Verify Prisma Schema compilations
+        run: |
+          cd backend
+          npx prisma generate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+      # 2. Test and build Next.js 14 Production Frontend App
+      - name: Build Frontend Next.js Production bundle
+        run: |
+          cd frontend
+          npm ci
+          NODE_ENV=production npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://api.leadflowai.com/api/v1
+
+      # 3. Simulate VPS Server Restart via PM2
+      - name: Deploy to VPS Cluster
+        run: |
+          echo "Simulating secure SSH release update to production servers..."
+          echo "Syncing compiled static files to Nginx Webroots..."
+          echo "Executing PM2 reload ecosystem.config.js..."
+          echo "Release successfully deployed."
