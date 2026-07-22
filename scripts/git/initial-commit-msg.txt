@@ -1,0 +1,3 @@
+Add scheduled git commit tooling for incremental pushes.
+
+Queue-based script commits 2 changes per run with Windows Task Scheduler support.

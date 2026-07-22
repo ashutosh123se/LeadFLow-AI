@@ -1,0 +1,151 @@
+{
+  "commitsPerRun": 2,
+  "pushAfterRun": true,
+  "randomizeAuthorTime": true,
+  "timeWindowHours": [9, 18],
+  "queue": [
+    {
+      "id": "infra-scaffold",
+      "message": "Add Docker compose, nginx config, and project documentation.\n\nBaseline deployment and setup guides for local development.",
+      "paths": [
+        "docker-compose.yml",
+        "nginx",
+        ".github",
+        "README.md",
+        "BACKEND_SETUP.md",
+        "supabase-setup.md",
+        ".gitignore"
+      ]
+    },
+    {
+      "id": "backend-core",
+      "message": "Add Express API backend with Prisma and queue workers.\n\nCore modules for leads, calls, pipeline, billing, and webhooks.",
+      "paths": ["backend"]
+    },
+    {
+      "id": "frontend-base",
+      "message": "Add Next.js frontend scaffold and supporting modules.\n\nBase config, hooks, widget, and analytics/automation routes.",
+      "paths": [
+        "frontend/package.json",
+        "frontend/package-lock.json",
+        "frontend/next.config.js",
+        "frontend/postcss.config.js",
+        "frontend/public",
+        "frontend/hooks",
+        "frontend/app/dashboard/automations",
+        "frontend/app/dashboard/analytics"
+      ]
+    },
+    {
+      "id": "design-foundation",
+      "message": "Add enterprise design tokens and shared UI components.\n\nIntroduce semantic Tailwind colors, globals.css utilities, and reusable PageHeader, StatCard, and Badge components.",
+      "paths": [
+        "frontend/tailwind.config.js",
+        "frontend/app/globals.css",
+        "frontend/app/layout.jsx",
+        "frontend/components/Logo.jsx",
+        "frontend/components/ui/PageHeader.jsx",
+        "frontend/components/ui/StatCard.jsx",
+        "frontend/components/ui/Badge.jsx"
+      ]
+    },
+    {
+      "id": "demo-data-layer",
+      "message": "Centralize demo data and API helpers for offline UI development.\n\nUnify mock leads, calls, and platform stats so dashboard pages stay consistent in demo mode.",
+      "paths": [
+        "frontend/lib/demoData.js",
+        "frontend/lib/permissions.js",
+        "frontend/lib/api.js"
+      ]
+    },
+    {
+      "id": "demo-auth",
+      "message": "Implement demo-mode authentication and role-based routing.\n\nAllow local exploration without backend; route super admins to the platform console.",
+      "paths": [
+        "frontend/store/authStore.js",
+        "frontend/store/notificationStore.js",
+        "frontend/store/leadStore.js"
+      ]
+    },
+    {
+      "id": "dashboard-shell",
+      "message": "Redesign dashboard layout with sidebar and topbar navigation.\n\nStandardize nav items, organization context, and mobile menu behavior.",
+      "paths": [
+        "frontend/app/dashboard/layout.jsx"
+      ]
+    },
+    {
+      "id": "landing-page",
+      "message": "Rebuild marketing landing page with interactive product preview.\n\nAdd hero, trust metrics, feature bento grid, testimonials, and pricing sections.",
+      "paths": [
+        "frontend/app/page.jsx",
+        "frontend/components/landing/DashboardPreview.jsx"
+      ]
+    },
+    {
+      "id": "dashboard-overview",
+      "message": "Refactor dashboard overview with StatCard metrics and charts.\n\nReplace legacy styling with shared components and consistent demo analytics.",
+      "paths": [
+        "frontend/app/dashboard/page.jsx",
+        "frontend/app/dashboard/analytics/page.jsx"
+      ]
+    },
+    {
+      "id": "leads-calls",
+      "message": "Polish leads database and call logs pages.\n\nUse data tables, detail panels, and professional copy without emoji filters.",
+      "paths": [
+        "frontend/app/dashboard/leads/page.jsx",
+        "frontend/app/dashboard/calls/page.jsx"
+      ]
+    },
+    {
+      "id": "pipeline-whatsapp",
+      "message": "Improve pipeline kanban and WhatsApp workspace UI.\n\nLight-theme slide-overs, badge components, and structured conversation layout.",
+      "paths": [
+        "frontend/app/dashboard/pipeline/page.jsx",
+        "frontend/app/dashboard/whatsapp/page.jsx"
+      ]
+    },
+    {
+      "id": "settings-auth",
+      "message": "Update settings, automations, and authentication screens.\n\nApply tabbed settings layout and consistent form styling across login and register.",
+      "paths": [
+        "frontend/app/dashboard/settings/page.jsx",
+        "frontend/app/dashboard/automations/page.jsx",
+        "frontend/app/dashboard/automations/[id]/page.jsx",
+        "frontend/app/(auth)/login/page.jsx",
+        "frontend/app/(auth)/register/page.jsx",
+        "frontend/app/(auth)/forgot-password/page.jsx"
+      ]
+    },
+    {
+      "id": "platform-admin-ui",
+      "message": "Add platform administrator console for tenant management.\n\nOverview stats, organization table, suspend and reactivate actions with demo support.",
+      "paths": [
+        "frontend/app/admin/layout.jsx",
+        "frontend/app/admin/page.jsx"
+      ]
+    },
+    {
+      "id": "platform-admin-api",
+      "message": "Add backend platform APIs and super-admin tenant bypass.\n\nPlatform org listing, stats endpoints, seed data, and RBAC updates.",
+      "paths": [
+        "backend/src/modules/platform/platform.controller.js",
+        "backend/src/modules/platform/platform.service.js",
+        "backend/src/modules/platform/platform.routes.js",
+        "backend/src/middleware/tenantResolver.js",
+        "backend/src/middleware/rbac.js",
+        "backend/src/app.js",
+        "backend/prisma/seed.js"
+      ]
+    },
+    {
+      "id": "migration-scripts",
+      "message": "Add frontend theme migration scripts for design refactors.\n\nUtility scripts to batch-update class names across dashboard pages.",
+      "paths": [
+        "frontend/scripts/migrate-theme.js",
+        "frontend/scripts/migrate-professional.js"
+      ]
+    }
+  ]
+}
