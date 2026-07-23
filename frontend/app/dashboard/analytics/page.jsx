@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 import { 
   TrendingUp, Users, PhoneCall, CheckSquare, Clock, Download, 
-  Calendar, RefreshCw, BarChart2, PieChart as PieIcon, Award, Loader2 
+  Calendar, RefreshCw, BarChart2, PieChart as PieIcon, Award, Loader2, MessageSquare 
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../../../lib/api';

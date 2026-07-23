@@ -14,7 +14,7 @@
     "prisma:reset": "prisma migrate reset --force",
     "db:setup": "prisma migrate deploy && node prisma/seed.js",
     "db:studio": "prisma studio",
-    "test": "node --test tests/**/*.test.js",
+    "test": "node --test tests/*.test.js",
     "test:e2e-call": "node scripts/e2e-call-test.js"
   },
   "prisma": {
