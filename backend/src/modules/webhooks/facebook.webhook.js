@@ -5,54 +5,39 @@ const { prisma } = require('../../config/db');
 const logger = require('../../utils/logger');
 const callQueue = require('../../queues/callQueue');
 const { emitToOrg } = require('../../config/socket');
+const verifyIntegrationWebhook = require('../../middleware/verifyIntegrationWebhook');
 
-// GET /api/v1/webhooks/facebook/:token (Verification check from Facebook)
 router.get('/:token', (req, res) => {
-  const { token } = req.params;
   const mode = req.query['hub.mode'];
   const verifyToken = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  logger.info(`Facebook Lead Ads verification request. Token URL: ${token}`);
-
-  if (mode && verifyToken) {
-    if (mode === 'subscribe' && verifyToken === token) {
-      logger.info('Facebook Lead Ads webhook verified successfully.');
+  prisma.integration.findFirst({
+    where: {
+      type: 'facebook',
+      isActive: true,
+      webhookUrl: { endsWith: `/${req.params.token}` },
+    },
+  }).then((integration) => {
+    const expectedVerifyToken = integration?.config?.verifyToken;
+    if (!expectedVerifyToken) {
+      return res.status(503).send('Facebook integration is not configured.');
+    }
+    if (mode === 'subscribe' && verifyToken === expectedVerifyToken) {
       return res.status(200).send(challenge);
     }
-  }
-  return res.status(403).send('Verification failed');
+    return res.status(403).send('Verification failed');
+  }).catch(() => res.status(500).send('Verification error'));
 });
 
-// POST /api/v1/webhooks/facebook/:token (Webhook Lead Event)
-router.post('/:token', async (req, res) => {
-  const { token } = req.params;
+router.post('/:token', verifyIntegrationWebhook('facebook'), async (req, res) => {
+  const org = req.organization;
+  const integration = req.integration;
   const body = req.body;
-  logger.info(`Received Facebook Lead Ads webhook POST. Token: ${token}, Body: ${JSON.stringify(body)}`);
-
-  // Respond to Facebook immediately
   res.sendStatus(200);
 
-  // Process asynchronously in background
   (async () => {
     try {
-      // 1. Resolve organization by integration token
-      const integration = await prisma.integration.findFirst({
-        where: {
-          type: 'facebook',
-          webhookUrl: { contains: token },
-        },
-        include: { organization: true },
-      });
-
-      if (!integration || !integration.organization) {
-        logger.warn(`No active Facebook integration found for token: ${token}`);
-        return;
-      }
-
-      const org = integration.organization;
-
-      // 2. Parse LeadGen ID from Facebook webhook change structure
       const entry = body.entry?.[0];
       const change = entry?.changes?.[0];
       const value = change?.value;
@@ -63,56 +48,46 @@ router.post('/:token', async (req, res) => {
         return;
       }
 
-      // 3. Retrieve Page Access Token from Integration configuration
-      let pageAccessToken = integration.config?.pageAccessToken || process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
-
+      const pageAccessToken = integration.config?.pageAccessToken;
       if (!pageAccessToken) {
-        logger.warn(`Facebook Page Access Token not configured for org ${org.id}. Ingesting mock data in development.`);
+        logger.error(`Facebook Page Access Token not configured for org ${org.id}.`);
+        await prisma.integration.update({
+          where: { id: integration.id },
+          data: {
+            config: {
+              ...integration.config,
+              connectionError: 'Facebook Page Access Token is missing. Reconnect the integration.',
+              connected: false,
+            },
+          },
+        });
+        return;
       }
 
-      // 4. Fetch lead details from Facebook Graph API
       let leadData = {
         name: `FB Lead (${leadgenId})`,
         phone: null,
         email: null,
-        requirement: null
+        requirement: null,
       };
 
-      if (pageAccessToken) {
-        try {
-          const fbGraphUrl = `https://graph.facebook.com/v18.0/${leadgenId}`;
-          const response = await axios.get(fbGraphUrl, {
-            params: { access_token: pageAccessToken }
-          });
+      try {
+        const fbGraphUrl = `https://graph.facebook.com/v18.0/${leadgenId}`;
+        const response = await axios.get(fbGraphUrl, {
+          params: { access_token: pageAccessToken },
+        });
 
-          const fieldData = response.data?.field_data || [];
-          fieldData.forEach((field) => {
-            const name = field.name;
-            const values = field.values || [];
-            const val = values[0];
-
-            if (name === 'full_name' || name === 'name') {
-              leadData.name = val;
-            } else if (name === 'phone_number' || name === 'phone') {
-              leadData.phone = val;
-            } else if (name === 'email') {
-              leadData.email = val;
-            } else {
-              leadData.requirement = `${leadData.requirement || ''} | ${name}: ${val}`.trim();
-            }
-          });
-        } catch (err) {
-          logger.error(`Failed to fetch lead details from Meta Graph API (leadgen_id: ${leadgenId}):`, err.response?.data || err.message);
-          // Standard dev-fallback mock lead if Graph API query fails
-          leadData.phone = body.phone || '9999999999';
-          leadData.name = body.name || `Facebook Lead (${leadgenId})`;
-          leadData.email = body.email || 'facebook-lead@example.com';
-        }
-      } else {
-        // Fallback mock payload in local dev/testing
-        leadData.phone = body.phone || '9999999999';
-        leadData.name = body.name || `Facebook Lead (${leadgenId})`;
-        leadData.email = body.email || 'facebook-lead@example.com';
+        const fieldData = response.data?.field_data || [];
+        fieldData.forEach((field) => {
+          const val = field.values?.[0];
+          if (field.name === 'full_name' || field.name === 'name') leadData.name = val;
+          else if (field.name === 'phone_number' || field.name === 'phone') leadData.phone = val;
+          else if (field.name === 'email') leadData.email = val;
+          else leadData.requirement = `${leadData.requirement || ''} | ${field.name}: ${val}`.trim();
+        });
+      } catch (err) {
+        logger.error(`Failed to fetch lead from Meta Graph API (${leadgenId}):`, err.response?.data || err.message);
+        return;
       }
 
       if (!leadData.phone) {
@@ -120,7 +95,6 @@ router.post('/:token', async (req, res) => {
         return;
       }
 
-      // 5. Ingest lead into CRM database
       const defaultPipeline = await prisma.pipeline.findFirst({
         where: { organizationId: org.id, isDefault: true },
         include: { stages: { orderBy: { order: 'asc' } } },
@@ -160,42 +134,26 @@ router.post('/:token', async (req, res) => {
             metadata: { leadgenId, ...leadData },
           },
         });
-      } else {
-        lead = await prisma.lead.update({
-          where: { id: lead.id },
-          data: {
-            requirement: leadData.requirement || lead.requirement,
-            lastContactedAt: new Date(),
-          },
-        });
       }
 
-      // 6. Socket update
       emitToOrg(org.id, 'lead:created', {
         leadId: lead.id,
         name: lead.name,
         source: 'FACEBOOK_AD',
       });
 
-      // 7. Queue AI Outbound call
-      if (isNewLead && org.aiCallerEnabled && org.aiCallsUsed < org.aiCallsLimit) {
-        await callQueue.add({
-          leadId: lead.id,
-          organizationId: org.id,
-        });
-        logger.info(`Speed-to-lead outbound dialer triggered for Facebook lead ${lead.id}`);
+      if (isNewLead && org.aiCallerEnabled) {
+        const UsageService = require('../billing/usage.service');
+        const usage = await UsageService.checkUsage(org.id, 'ai_calls', false);
+        if (usage.allowed) {
+          await callQueue.add({ leadId: lead.id, organizationId: org.id });
+        }
       }
 
-      // Trigger workflow automations
       const automationService = require('../automation/automation.service');
-      if (automationService && typeof automationService.triggerAutomations === 'function') {
-        await automationService.triggerAutomations(
-          'new_lead_created',
-          lead.id,
-          org.id,
-          { source: 'FACEBOOK_AD' }
-        );
-      }
+      await automationService.triggerAutomations('new_lead_created', lead.id, org.id, {
+        source: 'FACEBOOK_AD',
+      });
     } catch (asyncErr) {
       logger.error('Error processing Facebook webhook asynchronously:', asyncErr.message);
     }

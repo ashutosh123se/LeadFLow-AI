@@ -1,33 +1,42 @@
 const express = require('express');
 const router = express.Router();
-const crypto = require('crypto');
 const { prisma } = require('../../config/db');
 const razorpayConfig = require('../../config/razorpay');
 const logger = require('../../utils/logger');
 const emailQueue = require('../../queues/emailQueue');
+const InvoiceService = require('../billing/invoice.service');
+const UsageService = require('../billing/usage.service');
+const { verifyHmacSha256 } = require('../../utils/webhookSignature');
 
 const verifyRazorpaySignature = (req, res, next) => {
-  const signature = req.headers['x-razorpay-signature'];
-  const webhookSecret = razorpayConfig.webhookSecret || process.env.RAZORPAY_WEBHOOK_SECRET;
-
-  if (!signature) {
-    logger.warn('Razorpay webhook missing x-razorpay-signature');
-    return res.status(400).send('Signature missing');
+  const webhookSecret = razorpayConfig.webhookSecret;
+  if (!webhookSecret) {
+    logger.error('RAZORPAY_WEBHOOK_SECRET is not configured.');
+    return res.status(500).send('Webhook security is not configured.');
   }
 
-  const payload = req.rawBody ? req.rawBody : JSON.stringify(req.body);
-  const expectedSignature = crypto
-    .createHmac('sha256', webhookSecret)
-    .update(payload)
-    .digest('hex');
-
-  if (signature !== expectedSignature) {
-    logger.error('Razorpay webhook signature verification failed');
-    if (process.env.NODE_ENV === 'production') {
-      return res.status(400).send('Signature mismatch');
-    }
+  const result = verifyHmacSha256(req, webhookSecret, 'x-razorpay-signature');
+  if (!result.ok) {
+    logger.error(`Razorpay webhook rejected: ${result.message}`);
+    return res.status(result.status).send(result.message);
   }
-  next();
+
+  return next();
+};
+
+const resolvePlanFromRazorpay = async (subscriptionObj) => {
+  const rzpPlanId = subscriptionObj?.plan_id;
+  if (!rzpPlanId) return null;
+
+  return prisma.planDefinition.findFirst({
+    where: {
+      OR: [
+        { razorpayPlanIdMonthly: rzpPlanId },
+        { razorpayPlanIdAnnual: rzpPlanId },
+      ],
+      isActive: true,
+    },
+  });
 };
 
 router.post('/', verifyRazorpaySignature, async (req, res) => {
@@ -39,19 +48,18 @@ router.post('/', verifyRazorpaySignature, async (req, res) => {
 
   try {
     const subscriptionObj = payload?.subscription?.entity;
+    const paymentObj = payload?.payment?.entity;
     if (!subscriptionObj) {
       return res.sendStatus(200);
     }
 
     const razorpaySubId = subscriptionObj.id;
-
-    // Resolve organization by subscription ID
     const org = await prisma.organization.findFirst({
       where: { razorpaySubId },
     });
 
     if (!org) {
-      logger.warn(`Razorpay subscription ID ${razorpaySubId} is not associated with any organization in the system.`);
+      logger.warn(`Razorpay subscription ID ${razorpaySubId} is not associated with any organization.`);
       return res.sendStatus(200);
     }
 
@@ -59,41 +67,54 @@ router.post('/', verifyRazorpaySignature, async (req, res) => {
       where: { organizationId: org.id, role: 'OWNER' },
     });
 
-    const planLimitsMap = {
-      'STARTER': 20,
-      'GROWTH': 75,
-      'PRO': 200,
-    };
+    const planDef = await resolvePlanFromRazorpay(subscriptionObj);
+    const planSlug = planDef?.slug || org.plan;
+    const planPrice = planDef?.priceMonthly || 0;
+    const aiLimit = planDef?.maxAiCalls || org.aiCallsLimit;
+    const waLimit = planDef?.maxWhatsappMsg || org.whatsappMsgLimit;
 
     switch (eventType) {
       case 'subscription.activated': {
-        const planId = 'GROWTH'; // default mapped plan
-        const limit = planLimitsMap[planId] || 20;
-
-        await prisma.$transaction([
-          prisma.organization.update({
+        const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        const subscriptionRecord = await prisma.$transaction(async (tx) => {
+          await tx.organization.update({
             where: { id: org.id },
             data: {
-              plan: planId,
-              aiCallsLimit: limit,
+              plan: planSlug,
+              planDefinitionId: planDef?.id || org.planDefinitionId,
+              aiCallsLimit: aiLimit,
               aiCallsUsed: 0,
+              whatsappMsgLimit: waLimit,
+              whatsappMsgUsed: 0,
               isActive: true,
-              planExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+              planExpiresAt: periodEnd,
             },
-          }),
-          prisma.subscription.create({
+          });
+
+          return tx.subscription.create({
             data: {
               organizationId: org.id,
-              plan: planId,
+              planDefinitionId: planDef?.id,
+              plan: planSlug,
               status: 'active',
-              amount: 3499.00,
+              amount: planPrice,
               currency: 'INR',
               razorpaySubId,
               currentPeriodStart: new Date(),
-              currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+              currentPeriodEnd: periodEnd,
             },
-          }),
-        ]);
+          });
+        });
+
+        await InvoiceService.createFromPayment({
+          organizationId: org.id,
+          subscriptionId: subscriptionRecord.id,
+          planName: planDef?.name || `${planSlug} Plan`,
+          amount: planPrice,
+          razorpayPaymentId: paymentObj?.id || null,
+          billingPeriodStart: new Date(),
+          billingPeriodEnd: periodEnd,
+        });
 
         if (ownerUser) {
           await emailQueue.add({
@@ -101,25 +122,36 @@ router.post('/', verifyRazorpaySignature, async (req, res) => {
             template: 'payment_receipt',
             variables: {
               companyName: org.name,
-              amount: '3499.00',
-              planName: 'Growth Plan',
-              transactionId: razorpaySubId
-            }
+              amount: String(planPrice),
+              planName: planDef?.name || `${planSlug} Plan`,
+              transactionId: razorpaySubId,
+            },
           });
         }
         break;
       }
 
       case 'subscription.charged': {
-        const limit = planLimitsMap[org.plan] || 20;
-        const amountPaid = subscriptionObj.paid_count > 0 ? '3499.00' : '0.00';
+        const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        const amountPaid = paymentObj?.amount ? paymentObj.amount / 100 : planPrice;
 
+        await UsageService.resetMonthlyUsage(org.id);
         await prisma.organization.update({
           where: { id: org.id },
           data: {
-            aiCallsUsed: 0,
-            planExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            planExpiresAt: periodEnd,
+            isTrialing: false,
+            trialLeadCap: null,
           },
+        });
+
+        await InvoiceService.createFromPayment({
+          organizationId: org.id,
+          planName: planDef?.name || `${org.plan} Plan Renewal`,
+          amount: amountPaid,
+          razorpayPaymentId: paymentObj?.id || null,
+          billingPeriodStart: new Date(),
+          billingPeriodEnd: periodEnd,
         });
 
         if (ownerUser) {
@@ -128,53 +160,38 @@ router.post('/', verifyRazorpaySignature, async (req, res) => {
             template: 'payment_receipt',
             variables: {
               companyName: org.name,
-              amount: amountPaid,
-              planName: `${org.plan} Plan Renewal`,
-              transactionId: `renew-${razorpaySubId}-${Date.now()}`
-            }
+              amount: String(amountPaid),
+              planName: `${planDef?.name || org.plan} Plan Renewal`,
+              transactionId: paymentObj?.id || razorpaySubId,
+            },
           });
         }
         break;
       }
 
-      case 'subscription.halted': {
+      case 'subscription.halted':
         await prisma.organization.update({
           where: { id: org.id },
-          data: {
-            aiCallerEnabled: false,
-          },
+          data: { aiCallerEnabled: false },
         });
-
-        if (ownerUser) {
-          await emailQueue.add({
-            to: ownerUser.email,
-            subject: 'Subscription Halted - Action Required',
-            text: `Hello ${ownerUser.name},\n\nYour Razorpay subscription payment failed multiple times. Your outbound calling services have been suspended. Please log in and resolve your subscription billing.`,
-            html: `<h3>Payment Failed - Subscription Halted</h3><p>Hello ${ownerUser.name},</p><p>We tried to charge your payment method for subscription <strong>${razorpaySubId}</strong>, but it failed multiple times. Your LeadFlow-AI outbound calling services are suspended.</p><p>Please update your billing credentials on the dashboard.</p>`
-          });
-        }
         break;
-      }
 
       case 'subscription.cancelled': {
+        const starterPlan = await prisma.planDefinition.findUnique({ where: { slug: 'STARTER' } });
         await prisma.organization.update({
           where: { id: org.id },
           data: {
             plan: 'STARTER',
-            aiCallsLimit: 20,
+            planDefinitionId: starterPlan?.id || null,
+            aiCallsLimit: starterPlan?.maxAiCalls || 500,
             aiCallsUsed: 0,
+            whatsappMsgLimit: starterPlan?.maxWhatsappMsg || 200,
+            whatsappMsgUsed: 0,
+            isTrialing: false,
+            trialLeadCap: null,
             razorpaySubId: null,
           },
         });
-
-        if (ownerUser) {
-          await emailQueue.add({
-            to: ownerUser.email,
-            subject: 'LeadFlow-AI Subscription Cancelled',
-            text: `Hello ${ownerUser.name},\n\nYour premium subscription has been cancelled and downgraded to the Starter tier.`,
-            html: `<h3>Subscription Downgraded</h3><p>Hello ${ownerUser.name},</p><p>Your subscription has been cancelled. Your workspace limits have been downgraded to the Starter tier (20 free call qualification limit).</p>`
-          });
-        }
         break;
       }
 

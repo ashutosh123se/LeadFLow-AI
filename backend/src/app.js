@@ -36,7 +36,7 @@ const zapierWebhook = require('./modules/webhooks/zapier.webhook');
 const publicTenantResolver = require('./middleware/publicTenantResolver');
 const LeadService = require('./modules/leads/lead.service');
 const ApiResponse = require('./utils/ApiResponse');
-const { captureLimiter } = require('./middleware/rateLimiter');
+const { captureLimiter, apiLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 
@@ -79,8 +79,8 @@ app.use('/api/v1/webhooks/justdial', justdialWebhook);
 app.use('/api/v1/webhooks/facebook', facebookWebhook);
 app.use('/api/v1/webhooks/zapier', zapierWebhook);
 
-// 2. EMBEDDABLE PUBLIC LEAD CAPTURE
-app.post('/api/v1/capture/:orgToken', captureLimiter, publicTenantResolver, async (req, res, next) => {
+// 2. EMBEDDABLE PUBLIC LEAD CAPTURE (signed requests only)
+app.post('/api/v1/capture/:captureToken', captureLimiter, publicTenantResolver, async (req, res, next) => {
   try {
     const { name, phone, email, requirement, budget, consentGiven } = req.body;
 
@@ -109,6 +109,9 @@ app.post('/api/v1/capture/:orgToken', captureLimiter, publicTenantResolver, asyn
     next(error);
   }
 });
+
+// Global API rate limiting for authenticated routes
+app.use('/api/v1', apiLimiter);
 
 // 3. SECURED PRIVATE MODULE ROUTES
 app.use('/api/v1/auth', authRoutes);

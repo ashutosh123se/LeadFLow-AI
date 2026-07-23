@@ -22,15 +22,18 @@ const useNotificationStore = create((set, get) => ({
   initSocket: (orgId) => {
     if (get().socket) return;
 
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (!token || token.startsWith('demo-') || token === 'super-admin-token') {
+      console.warn('Realtime sockets require a valid JWT. Connect with real authentication.');
+      return;
+    }
     const socketUrl = process.env.NEXT_PUBLIC_API_URL
       ? process.env.NEXT_PUBLIC_API_URL.replace('/api/v1', '')
-      : 'https://api.leadflowai.com';
+      : 'http://localhost:5000';
 
     const socket = io(socketUrl, {
       transports: ['websocket'],
-      auth: {
-        token: localStorage.getItem('token'),
-      },
+      auth: { token },
     });
 
     socket.on('connect', () => {

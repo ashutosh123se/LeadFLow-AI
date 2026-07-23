@@ -8,6 +8,9 @@ import {
 } from 'lucide-react';
 import Logo from '../components/Logo';
 import DashboardPreview from '../components/landing/DashboardPreview';
+import {
+  PRICING_PLANS, TELECALLER_COMPARISON, ANNUAL_DISCOUNT, formatInr, monthlyDisplayPrice,
+} from '../lib/plans';
 
 const LOGOS = ['PropStack', 'FinEdge', 'BuildRight', 'MediCore', 'CloudNine', 'RetailMax'];
 
@@ -74,37 +77,12 @@ const TESTIMONIALS = [
   },
 ];
 
-const PLANS = [
-  {
-    name: 'Starter',
-    price: '1,999',
-    calls: '20 AI calls',
-    seats: '5 seats',
-    features: ['Pipeline & kanban', 'WhatsApp templates', 'Basic analytics', 'Email support'],
-  },
-  {
-    name: 'Growth',
-    price: '3,499',
-    calls: '75 AI calls',
-    seats: '15 seats',
-    featured: true,
-    features: ['Everything in Starter', 'Custom automations', 'Team assignments', 'Priority support'],
-  },
-  {
-    name: 'Enterprise',
-    price: '5,999',
-    calls: '200 AI calls',
-    seats: 'Unlimited seats',
-    features: ['Everything in Growth', 'Platform admin', 'Custom integrations', 'Dedicated CSM'],
-  },
-];
-
 const FAQS = [
   { q: 'How does automated qualification work?', a: 'When a lead arrives from any source, LeadFlow places an AI voice call within 90 seconds. The conversation is transcribed, scored, and the lead is routed to the right pipeline stage automatically.' },
-  { q: 'Which languages are supported?', a: 'English, Hindi, and Hinglish are supported out of the box. Enterprise plans can include additional regional languages.' },
-  { q: 'Do I need to connect my phone system?', a: 'No. LeadFlow includes telephony infrastructure. You configure calling hours, voice persona, and qualification scripts from Settings.' },
-  { q: 'How is usage billed?', a: 'Plans include a monthly AI call allowance. Additional calls are metered per usage, similar to modern SaaS billing models.' },
-  { q: 'Can I import existing leads?', a: 'Yes. Import via CSV, API, or connect IndiaMART, JustDial, Facebook Lead Ads, and Zapier webhooks.' },
+  { q: 'Why compare to a telecaller instead of per-minute APIs?', a: 'LeadFlow is a done-for-you AI sales team — not raw calling minutes. One full-time Indian telecaller costs ₹30,000–70,000/month and handles ~550–880 meaningful connects. LeadFlow delivers more volume, 90-second response, and 24/7 coverage at comparable cost.' },
+  { q: 'Which languages are supported?', a: 'Starter includes one language (Hindi, Hinglish, or English). Growth adds all three switchable per lead. Scale and Enterprise include all languages plus custom voice tuning.' },
+  { q: 'What happens when I exceed my lead cap?', a: 'We never hard-block mid-cycle. Extra leads bill at your tier overage rate (₹20/₹18/₹15 per lead). You see usage in real time and get upgrade prompts before you hit the cap.' },
+  { q: 'Is there a free plan?', a: 'No permanent free tier — every lead costs real API spend. Starter includes a 14-day trial capped at 25 leads so you can prove ROI before paying.' },
 ];
 
 export default function LandingPage() {
@@ -318,42 +296,86 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Pricing — Attio tiers + Chargebee usage hint */}
+      {/* Pricing — telecaller comparison hero + 4 tiers */}
       <section id="pricing" className="max-w-6xl mx-auto px-6 py-20">
-        <div className="text-center max-w-2xl mx-auto mb-10">
-          <p className="section-label mb-3">Pricing</p>
-          <h2 className="text-3xl font-semibold tracking-tight">From startup to enterprise</h2>
-          <p className="text-muted mt-3">Transparent plans with usage-based AI call metering. Start free, scale as you grow.</p>
-          <div className="inline-flex segmented mt-6">
-            <button onClick={() => setBilling('monthly')} className={`segmented-item ${billing === 'monthly' ? 'segmented-item-active' : ''}`}>Monthly</button>
-            <button onClick={() => setBilling('annual')} className={`segmented-item ${billing === 'annual' ? 'segmented-item-active' : ''}`}>Annual · Save 20%</button>
+        <div className="card p-6 md:p-8 mb-12 bg-gradient-to-br from-primary/5 via-card to-accent/5 border-primary/10">
+          <p className="section-label mb-3">Why LeadFlow-AI</p>
+          <h2 className="text-2xl md:text-3xl font-semibold tracking-tight max-w-3xl">
+            Replace one telecaller — get more leads answered, faster, for the same budget
+          </h2>
+          <p className="text-muted mt-4 max-w-2xl leading-relaxed">
+            A full-time Indian telecaller costs ₹{formatInr(TELECALLER_COMPARISON.humanCostMin)}–{formatInr(TELECALLER_COMPARISON.humanCostMax)}/month
+            and typically handles only {TELECALLER_COMPARISON.humanConnectsMin}–{TELECALLER_COMPARISON.humanConnectsMax} meaningful connects.
+            LeadFlow responds in {TELECALLER_COMPARISON.responseTimeLeadFlow}, runs 24/7, and scales without hiring.
+          </p>
+          <div className="grid sm:grid-cols-3 gap-4 mt-8">
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className="text-2xs text-muted uppercase tracking-wider">Human telecaller</p>
+              <p className="text-lg font-semibold mt-1">₹30K–70K/mo</p>
+              <p className="text-xs text-muted mt-1">550–880 connects · responds in hours</p>
+            </div>
+            <div className="rounded-lg border border-primary/30 bg-primary-light/40 p-4">
+              <p className="text-2xs text-primary uppercase tracking-wider font-semibold">LeadFlow Growth</p>
+              <p className="text-lg font-semibold mt-1">₹37,500/mo</p>
+              <p className="text-xs text-muted mt-1">1,500 AI leads · 90-second response · 24/7</p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className="text-2xs text-muted uppercase tracking-wider">Your upside</p>
+              <p className="text-lg font-semibold mt-1">2–3× volume</p>
+              <p className="text-xs text-muted mt-1">Same headcount budget · no attrition risk</p>
+            </div>
           </div>
         </div>
-        <div className="grid md:grid-cols-3 gap-5">
-          {PLANS.map((p) => (
-            <div key={p.name} className={p.featured ? 'pricing-card-featured' : 'pricing-card'}>
-              {p.featured && <span className="text-xs font-semibold text-primary mb-3">Most popular</span>}
-              <h3 className="font-semibold text-lg">{p.name}</h3>
-              <div className="mt-4 flex items-baseline gap-1">
-                <IndianRupee className="w-5 h-5 text-muted" />
-                <span className="text-4xl font-semibold tabular-nums">
-                  {billing === 'annual' ? Math.round(parseInt(p.price.replace(',', '')) * 0.8).toLocaleString('en-IN') : p.price}
-                </span>
-                <span className="text-sm text-muted">/mo</span>
+
+        <div className="text-center max-w-2xl mx-auto mb-10">
+          <p className="section-label mb-3">Plans</p>
+          <h2 className="text-3xl font-semibold tracking-tight">Four tiers. One AI sales team.</h2>
+          <p className="text-muted mt-3">Monthly lead caps with automatic overage billing — never lose a hot lead mid-cycle.</p>
+          <div className="inline-flex segmented mt-6">
+            <button onClick={() => setBilling('monthly')} className={`segmented-item ${billing === 'monthly' ? 'segmented-item-active' : ''}`}>Monthly</button>
+            <button onClick={() => setBilling('annual')} className={`segmented-item ${billing === 'annual' ? 'segmented-item-active' : ''}`}>Annual · Save {Math.round(ANNUAL_DISCOUNT * 100)}%</button>
+          </div>
+        </div>
+        <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-5">
+          {PRICING_PLANS.map((p) => {
+            const displayPrice = monthlyDisplayPrice(p, billing);
+            return (
+              <div key={p.slug} className={p.featured ? 'pricing-card-featured' : 'pricing-card'}>
+                {p.featured && <span className="text-xs font-semibold text-primary mb-3">Most popular</span>}
+                <h3 className="font-semibold text-lg">{p.name}</h3>
+                <p className="text-xs text-muted mt-1">{p.segment}</p>
+                <div className="mt-4 flex items-baseline gap-1">
+                  {displayPrice != null ? (
+                    <>
+                      <IndianRupee className="w-5 h-5 text-muted" />
+                      <span className="text-3xl font-semibold tabular-nums">{formatInr(displayPrice)}</span>
+                      <span className="text-sm text-muted">/mo</span>
+                    </>
+                  ) : (
+                    <span className="text-2xl font-semibold">Custom quote</span>
+                  )}
+                </div>
+                {billing === 'annual' && displayPrice != null && (
+                  <p className="text-xs text-muted mt-1">Billed annually · ~2 months free</p>
+                )}
+                <p className="text-sm text-muted mt-2">{p.leads} · {p.seats}</p>
+                <p className="text-xs text-muted">Overage: {p.overage}</p>
+                <ul className="space-y-2.5 mt-6 flex-1">
+                  {p.features.map((f) => (
+                    <li key={f} className="flex gap-2 text-sm text-muted">
+                      <Check className="w-4 h-4 text-primary shrink-0 mt-0.5" />{f}
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  href={p.ctaHref}
+                  className={`mt-6 w-full rounded-lg ${p.featured ? 'btn-primary' : 'btn-secondary'}`}
+                >
+                  {p.cta}
+                </Link>
               </div>
-              <p className="text-sm text-muted mt-2">{p.calls} · {p.seats}</p>
-              <ul className="space-y-2.5 mt-6 flex-1">
-                {p.features.map((f) => (
-                  <li key={f} className="flex gap-2 text-sm text-muted">
-                    <Check className="w-4 h-4 text-primary shrink-0 mt-0.5" />{f}
-                  </li>
-                ))}
-              </ul>
-              <Link href="/register" className={`mt-6 w-full rounded-lg ${p.featured ? 'btn-primary' : 'btn-secondary'}`}>
-                {p.name === 'Enterprise' ? 'Talk to sales' : 'Start for free'}
-              </Link>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -385,7 +407,7 @@ export default function LandingPage() {
           <div className="relative">
             <h2 className="text-3xl font-semibold tracking-tight">Start building your AI sales engine</h2>
             <p className="text-white/70 mt-3 max-w-lg mx-auto text-base">
-              Join teams who respond to every lead in under 90 seconds. 20 free AI calls included — no credit card required.
+              Join teams who respond to every lead in under 90 seconds. 14-day trial on Starter — up to 25 leads, no credit card required.
             </p>
             <div className="flex flex-wrap justify-center gap-3 mt-8">
               <Link href="/register" className="inline-flex items-center gap-2 h-11 px-6 rounded-lg bg-white text-foreground font-medium text-sm hover:bg-white/90 transition-colors">

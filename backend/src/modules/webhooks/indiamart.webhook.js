@@ -4,34 +4,16 @@ const { prisma } = require('../../config/db');
 const logger = require('../../utils/logger');
 const callQueue = require('../../queues/callQueue');
 const { emitToOrg } = require('../../config/socket');
+const verifyIntegrationWebhook = require('../../middleware/verifyIntegrationWebhook');
 
-// POST or GET /api/v1/webhooks/indiamart/:token
 const handleIndiaMartWebhook = async (req, res) => {
-  const { token } = req.params;
+  const org = req.organization;
   const payload = { ...req.query, ...req.body };
-  logger.info(`Received IndiaMART lead payload. Token: ${token}, Payload: ${JSON.stringify(payload)}`);
+  logger.info(`Received IndiaMART lead payload for org ${org.id}`);
 
   try {
-    // 1. Resolve organization by integration token
-    const integration = await prisma.integration.findFirst({
-      where: {
-        type: 'indiamart',
-        webhookUrl: { contains: token },
-      },
-      include: { organization: true },
-    });
-
-    if (!integration || !integration.organization) {
-      logger.warn(`No active IndiaMART integration found for token: ${token}`);
-      return res.status(404).json({ error: 'Integration token invalid.' });
-    }
-
-    const org = integration.organization;
-
-    // 2. Extract Lead Data (Map IndiaMART standard fields)
     const phone = payload.SENDER_MOBILE || payload.sender_mobile || payload.mobile || payload.phone;
     if (!phone) {
-      logger.warn('IndiaMART webhook missing sender mobile phone number.');
       return res.status(400).json({ error: 'Phone number is required.' });
     }
 
@@ -40,14 +22,12 @@ const handleIndiaMartWebhook = async (req, res) => {
     const company = payload.SENDER_COMPANY || payload.sender_company || payload.company || null;
     const requirement = payload.QUERY_MESSAGE || payload.query_message || payload.requirement || payload.query || null;
 
-    // 3. Find default pipeline stage
     const defaultPipeline = await prisma.pipeline.findFirst({
       where: { organizationId: org.id, isDefault: true },
       include: { stages: { orderBy: { order: 'asc' } } },
     });
     const stageId = defaultPipeline?.stages?.[0]?.id || null;
 
-    // Check if lead already exists in org
     let lead = await prisma.lead.findFirst({
       where: {
         phone: { contains: phone.slice(-10) },
@@ -83,7 +63,6 @@ const handleIndiaMartWebhook = async (req, res) => {
         },
       });
     } else {
-      // Update existing lead requirement
       lead = await prisma.lead.update({
         where: { id: lead.id },
         data: {
@@ -93,32 +72,24 @@ const handleIndiaMartWebhook = async (req, res) => {
       });
     }
 
-    // 4. Emit live update
     emitToOrg(org.id, 'lead:created', {
       leadId: lead.id,
       name: lead.name,
       source: 'INDIAMART',
     });
 
-    // 5. Trigger speed-to-lead AI Caller
-    if (isNewLead && org.aiCallerEnabled && org.aiCallsUsed < org.aiCallsLimit) {
-      await callQueue.add({
-        leadId: lead.id,
-        organizationId: org.id,
-      });
-      logger.info(`Speed-to-lead outbound dialer triggered for IndiaMART lead ${lead.id}`);
+    if (isNewLead && org.aiCallerEnabled) {
+      const UsageService = require('../billing/usage.service');
+      const usage = await UsageService.checkUsage(org.id, 'ai_calls', false);
+      if (usage.allowed) {
+        await callQueue.add({ leadId: lead.id, organizationId: org.id });
+      }
     }
 
-    // Trigger workflow automations
     const automationService = require('../automation/automation.service');
-    if (automationService && typeof automationService.triggerAutomations === 'function') {
-      await automationService.triggerAutomations(
-        'new_lead_created',
-        lead.id,
-        org.id,
-        { source: 'INDIAMART' }
-      );
-    }
+    await automationService.triggerAutomations('new_lead_created', lead.id, org.id, {
+      source: 'INDIAMART',
+    });
 
     return res.status(200).json({ success: true, leadId: lead.id });
   } catch (error) {
@@ -127,7 +98,6 @@ const handleIndiaMartWebhook = async (req, res) => {
   }
 };
 
-router.post('/:token', handleIndiaMartWebhook);
-router.get('/:token', handleIndiaMartWebhook);
+router.post('/:token', verifyIntegrationWebhook('indiamart'), handleIndiaMartWebhook);
 
 module.exports = router;

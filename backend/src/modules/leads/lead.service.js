@@ -31,7 +31,7 @@ const isWithinCallingHours = (startStr, endStr) => {
 };
 
 class LeadService {
-  static async getAll(orgId, filters = {}, pagination = {}) {
+  static async getAll(orgId, filters = {}, pagination = {}, accessFilter = {}) {
     const { page = 1, limit = 10, skip = 0 } = pagination;
     const {
       status,
@@ -47,6 +47,7 @@ class LeadService {
     // Build Prisma query clauses
     const where = {
       organizationId: orgId,
+      ...accessFilter,
     };
 
     if (status) where.status = status;
@@ -91,9 +92,9 @@ class LeadService {
     return { total, data };
   }
 
-  static async getById(orgId, leadId) {
+  static async getById(orgId, leadId, accessFilter = {}) {
     const lead = await prisma.lead.findFirst({
-      where: { id: leadId, organizationId: orgId },
+      where: { id: leadId, organizationId: orgId, ...accessFilter },
       include: {
         assignedTo: {
           select: { id: true, name: true, email: true, avatar: true },
@@ -207,6 +208,12 @@ class LeadService {
     }
 
     emitToOrg(orgId, 'lead:created', { lead });
+
+    const automationService = require('../automation/automation.service');
+    await automationService.triggerAutomations('new_lead_created', lead.id, orgId, {
+      source: lead.source,
+    });
+
     return lead;
   }
 

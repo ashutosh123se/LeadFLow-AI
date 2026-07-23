@@ -1,0 +1,3 @@
+Merge remote main with local work (unrelated histories).
+
+Keep local enterprise UI, demo mode, and platform admin; retain remote analytics and automations pages.

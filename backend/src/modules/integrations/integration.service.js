@@ -9,23 +9,23 @@ class IntegrationService {
     });
 
     const activeTypes = list.map((i) => i.type);
+    const apiDomain = process.env.API_DOMAIN || 'http://localhost:5000';
 
-    // Return full catalog indicating which ones are connected
     const catalog = [
       {
         type: 'indiamart',
         name: 'IndiaMART',
         description: 'Sync your B2B marketplace enquiries into CRM automatically.',
         connected: activeTypes.includes('indiamart'),
-        config: list.find((i) => i.type === 'indiamart')?.config || null,
+        config: IntegrationService.sanitizeConfig(list.find((i) => i.type === 'indiamart')?.config),
         webhookUrl: list.find((i) => i.type === 'indiamart')?.webhookUrl || null,
       },
       {
         type: 'justdial',
-        name: 'Justdial',
+        name: 'JustDial',
         description: 'Push incoming Justdial local business leads instantly.',
         connected: activeTypes.includes('justdial'),
-        config: list.find((i) => i.type === 'justdial')?.config || null,
+        config: IntegrationService.sanitizeConfig(list.find((i) => i.type === 'justdial')?.config),
         webhookUrl: list.find((i) => i.type === 'justdial')?.webhookUrl || null,
       },
       {
@@ -33,7 +33,7 @@ class IntegrationService {
         name: 'Facebook Lead Ads',
         description: 'Map form fields from Facebook/Instagram ad lead forms.',
         connected: activeTypes.includes('facebook'),
-        config: list.find((i) => i.type === 'facebook')?.config || null,
+        config: IntegrationService.sanitizeConfig(list.find((i) => i.type === 'facebook')?.config),
         webhookUrl: list.find((i) => i.type === 'facebook')?.webhookUrl || null,
       },
       {
@@ -41,38 +41,85 @@ class IntegrationService {
         name: 'Zapier Webhook',
         description: 'Push custom leads to CRM from 5000+ apps.',
         connected: activeTypes.includes('zapier'),
-        config: list.find((i) => i.type === 'zapier')?.config || null,
+        config: IntegrationService.sanitizeConfig(list.find((i) => i.type === 'zapier')?.config),
         webhookUrl: list.find((i) => i.type === 'zapier')?.webhookUrl || null,
       },
     ];
 
-    return catalog;
+    return catalog.map((item) => ({
+      ...item,
+      docs: {
+        signatureHeader: 'X-LeadFlow-Signature',
+        signatureAlgorithm: 'HMAC-SHA256 hex digest of raw JSON body using webhookSecret',
+        apiDomain,
+      },
+    }));
+  }
+
+  static sanitizeConfig(config) {
+    if (!config) return null;
+    const { webhookSecret, ...safe } = config;
+    return {
+      ...safe,
+      hasWebhookSecret: Boolean(webhookSecret),
+    };
   }
 
   static async connect(orgId, type, config) {
-    // Generate a unique webhook/org token for capture
-    const token = crypto.randomBytes(16).toString('hex');
-    const webhookUrl = `https://api.leadflowai.com/api/v1/webhooks/${type}/${token}`;
-
-    const integration = await prisma.integration.upsert({
-      where: {
-        // We want custom compound unique indices but wait, let's query first
-        id: (await prisma.integration.findFirst({ where: { organizationId: orgId, type } }))?.id || 'new-id',
-      },
-      create: {
-        organizationId: orgId,
-        type,
-        config: config || {},
-        webhookUrl,
-        isActive: true,
-      },
-      update: {
-        config: config || {},
-        isActive: true,
-      },
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      include: { planDefinition: true },
     });
 
-    return integration;
+    const { canConnectIntegration, getUpgradeSuggestion } = require('../billing/planFeatures');
+    if (!canConnectIntegration(org, type)) {
+      throw new ApiError(
+        402,
+        `${type} integration requires a higher plan. Upgrade to Growth or above.`,
+        { upgrade: getUpgradeSuggestion(org, 'integration') }
+      );
+    }
+
+    const token = crypto.randomBytes(16).toString('hex');
+    const webhookSecret = crypto.randomBytes(32).toString('hex');
+    const apiDomain = process.env.API_DOMAIN || 'http://localhost:5000';
+    const webhookUrl = `${apiDomain}/api/v1/webhooks/${type}/${token}`;
+
+    const existing = await prisma.integration.findFirst({
+      where: { organizationId: orgId, type },
+    });
+
+    const mergedConfig = {
+      ...(existing?.config || {}),
+      ...(config || {}),
+      webhookSecret,
+      verifyToken: config?.verifyToken || crypto.randomBytes(16).toString('hex'),
+    };
+
+    const integration = existing
+      ? await prisma.integration.update({
+          where: { id: existing.id },
+          data: {
+            config: mergedConfig,
+            webhookUrl,
+            isActive: true,
+          },
+        })
+      : await prisma.integration.create({
+          data: {
+            organizationId: orgId,
+            type,
+            config: mergedConfig,
+            webhookUrl,
+            isActive: true,
+          },
+        });
+
+    return {
+      ...integration,
+      webhookSecret,
+      signatureHeader: 'X-LeadFlow-Signature',
+    };
   }
 
   static async disconnect(orgId, type) {

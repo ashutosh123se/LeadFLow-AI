@@ -1,17 +1,42 @@
 const { prisma } = require('../../config/db');
 const ApiError = require('../../utils/ApiError');
 const logger = require('../../utils/logger');
+const { getUpgradeSuggestion } = require('./planFeatures');
+const OverageService = require('./overage.service');
 
 /**
- * Usage metering service — checks resource usage against plan limits in real time.
- * Called before any resource-consuming action (AI call, WhatsApp message, employee add).
+ * Usage metering — enforces plan limits server-side.
+ * AI leads/calls allow overage billing when configured; other resources hard-block at cap.
  */
 class UsageService {
-  /**
-   * Check if the organization can use a specific resource.
-   * Returns { allowed, used, limit, remaining, percentage }
-   * Throws ApiError(402) if limit exceeded and throwOnExceed is true.
-   */
+  static _resolveAiLimits(org) {
+    const slug = org?.planDefinition?.slug || org?.plan || 'STARTER';
+    const rate = org?.planDefinition?.overageRatePerLead ?? 0;
+    let limit = org.aiCallsLimit;
+    let used = org.aiCallsUsed;
+
+    if (org.isTrialing && org.trialLeadCap != null) {
+      limit = org.trialLeadCap;
+    }
+
+    const inOverage = used >= org.aiCallsLimit && !org.isTrialing;
+    const allowsOverage = inOverage && (rate > 0 || slug === 'ENTERPRISE');
+    const allowed = used < limit || allowsOverage;
+
+    return {
+      used,
+      limit,
+      planLimit: org.aiCallsLimit,
+      remaining: Math.max(0, limit - used),
+      percentage: limit > 0 ? Math.round((used / limit) * 100) : 0,
+      allowed,
+      inOverage,
+      allowsOverage,
+      overageRate: rate,
+      resourceName: 'AI leads/calls',
+    };
+  }
+
   static async checkUsage(orgId, resource, throwOnExceed = true) {
     const org = await prisma.organization.findUnique({
       where: { id: orgId },
@@ -22,28 +47,40 @@ class UsageService {
       throw new ApiError(404, 'Organization not found.');
     }
 
-    let used, limit, resourceName;
+    let result;
 
     switch (resource) {
       case 'ai_calls':
-        used = org.aiCallsUsed;
-        limit = org.aiCallsLimit;
-        resourceName = 'AI calls';
+        result = this._resolveAiLimits(org);
         break;
 
-      case 'whatsapp_messages':
-        used = org.whatsappMsgUsed;
-        limit = org.whatsappMsgLimit;
-        resourceName = 'WhatsApp messages';
+      case 'whatsapp_messages': {
+        const used = org.whatsappMsgUsed;
+        const limit = org.whatsappMsgLimit;
+        result = {
+          used,
+          limit,
+          remaining: Math.max(0, limit - used),
+          percentage: limit > 0 ? Math.round((used / limit) * 100) : 0,
+          allowed: used < limit,
+          resourceName: 'WhatsApp messages',
+        };
         break;
+      }
 
       case 'employees': {
         const employeeCount = await prisma.user.count({
           where: { organizationId: orgId, isActive: true },
         });
-        used = employeeCount;
-        limit = org.planDefinition?.maxEmployees || 5;
-        resourceName = 'team members';
+        const limit = org.planDefinition?.maxEmployees ?? 2;
+        result = {
+          used: employeeCount,
+          limit,
+          remaining: Math.max(0, limit - employeeCount),
+          percentage: limit > 0 ? Math.round((employeeCount / limit) * 100) : 0,
+          allowed: limit == null || employeeCount < limit,
+          resourceName: 'team members',
+        };
         break;
       }
 
@@ -51,9 +88,15 @@ class UsageService {
         const leadCount = await prisma.lead.count({
           where: { organizationId: orgId },
         });
-        used = leadCount;
-        limit = org.planDefinition?.maxLeads || 500;
-        resourceName = 'leads';
+        const limit = org.planDefinition?.maxLeads || 500;
+        result = {
+          used: leadCount,
+          limit,
+          remaining: Math.max(0, limit - leadCount),
+          percentage: limit > 0 ? Math.round((leadCount / limit) * 100) : 0,
+          allowed: leadCount < limit,
+          resourceName: 'leads',
+        };
         break;
       }
 
@@ -61,67 +104,52 @@ class UsageService {
         throw new ApiError(400, `Unknown resource type: ${resource}`);
     }
 
-    const remaining = Math.max(0, limit - used);
-    const percentage = limit > 0 ? Math.round((used / limit) * 100) : 0;
-    const allowed = used < limit;
-
-    if (!allowed && throwOnExceed) {
+    if (!result.allowed && throwOnExceed) {
+      const upgrade = resource === 'ai_calls' ? getUpgradeSuggestion(org, 'lead_cap') : null;
       throw new ApiError(
         402,
-        `${resourceName} limit reached (${used}/${limit}). Please upgrade your plan to continue.`
+        `${result.resourceName} limit reached (${result.used}/${result.limit}). Please upgrade your plan to continue.`,
+        upgrade ? { upgrade } : undefined
       );
     }
 
-    return { allowed, used, limit, remaining, percentage, resourceName };
+    return result;
   }
 
-  /**
-   * Increment usage counter for a resource.
-   * Validates limit before incrementing.
-   */
   static async incrementUsage(orgId, resource, amount = 1) {
-    // Check first
+    if (resource === 'ai_calls') {
+      return OverageService.recordLeadOverage(orgId, amount);
+    }
+
     await this.checkUsage(orgId, resource, true);
 
-    switch (resource) {
-      case 'ai_calls':
-        await prisma.organization.update({
-          where: { id: orgId },
-          data: { aiCallsUsed: { increment: amount } },
-        });
-        break;
-
-      case 'whatsapp_messages':
-        await prisma.organization.update({
-          where: { id: orgId },
-          data: { whatsappMsgUsed: { increment: amount } },
-        });
-        break;
-
-      default:
-        // employees and leads don't have a simple counter — they're model counts
-        break;
+    if (resource === 'whatsapp_messages') {
+      await prisma.organization.update({
+        where: { id: orgId },
+        data: { whatsappMsgUsed: { increment: amount } },
+      });
     }
+
+    return { type: 'included', overage: false };
   }
 
-  /**
-   * Reset monthly usage counters (called by billing webhook on subscription renewal)
-   */
   static async resetMonthlyUsage(orgId) {
+    const OverageServiceRef = require('./overage.service');
+    await OverageServiceRef.settlePendingOverage(orgId);
+
     await prisma.organization.update({
       where: { id: orgId },
       data: {
         aiCallsUsed: 0,
         whatsappMsgUsed: 0,
+        overageLeadsUsed: 0,
+        overageAmountPending: 0,
       },
     });
 
     logger.info(`Monthly usage counters reset for org ${orgId}`);
   }
 
-  /**
-   * Check if a feature is enabled for the organization's current plan
-   */
   static async isFeatureEnabled(orgId, featureKey) {
     const org = await prisma.organization.findUnique({
       where: { id: orgId },
@@ -139,11 +167,13 @@ class UsageService {
     return flags[featureKey] === true;
   }
 
-  /**
-   * Get usage warnings (for notification system)
-   * Returns warnings for resources near their limit (>80%)
-   */
   static async getUsageWarnings(orgId) {
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      include: { planDefinition: true },
+    });
+    if (!org) return [];
+
     const warnings = [];
     const resources = ['ai_calls', 'whatsapp_messages', 'employees', 'leads'];
 
@@ -153,8 +183,9 @@ class UsageService {
         if (usage.percentage >= 90) {
           warnings.push({
             resource,
-            level: 'critical',
+            level: usage.inOverage ? 'overage' : 'critical',
             message: `${usage.resourceName}: ${usage.used}/${usage.limit} used (${usage.percentage}%)`,
+            upgrade: resource === 'ai_calls' ? getUpgradeSuggestion(org, 'approaching_cap') : null,
             ...usage,
           });
         } else if (usage.percentage >= 80) {
@@ -162,6 +193,7 @@ class UsageService {
             resource,
             level: 'warning',
             message: `${usage.resourceName}: ${usage.used}/${usage.limit} used (${usage.percentage}%)`,
+            upgrade: resource === 'ai_calls' ? getUpgradeSuggestion(org, 'approaching_cap') : null,
             ...usage,
           });
         }

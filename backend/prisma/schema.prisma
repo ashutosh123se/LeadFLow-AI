@@ -15,6 +15,7 @@ model Organization {
   id                  String    @id @default(uuid())
   name                String
   slug                String    @unique
+  captureToken        String?   @unique // unguessable token for public website lead capture
   logo                String?
   industry            String?
   // Legacy plan enum (kept for backward-compat in Subscription model)
@@ -27,6 +28,11 @@ model Organization {
   aiCallsLimit        Int       @default(20)
   whatsappMsgUsed     Int       @default(0)
   whatsappMsgLimit    Int       @default(100)
+  overageLeadsUsed    Int       @default(0)
+  overageAmountPending Float    @default(0)
+  billingInterval     String?   @default("monthly")
+  isTrialing          Boolean   @default(false)
+  trialLeadCap        Int?
   isActive            Boolean   @default(true)
   razorpaySubId       String?
   razorpayCustomerId  String?
@@ -79,6 +85,8 @@ model Organization {
 enum PlanTier {
   STARTER
   GROWTH
+  SCALE
+  ENTERPRISE
   PRO
 }
 
@@ -96,7 +104,10 @@ model PlanDefinition {
   maxAiCalls        Int       // max AI calls per month
   maxWhatsappMsg    Int       // max WhatsApp messages per month
   maxLeads          Int       @default(999999) // max leads stored
-  featureFlags      Json      // { "metaAds": true, "googleAds": false, "customScoring": true, ... }
+  overageRatePerLead Float    @default(0)      // INR per lead beyond monthly cap
+  trialLeadCap      Int       @default(0)      // max leads during trial (Starter only)
+  maxAutomations    Int?                        // null = unlimited, 0 = none
+  featureFlags      Json      // plan capabilities for server-side gating
   razorpayPlanIdMonthly  String?  // Razorpay plan ID for monthly billing
   razorpayPlanIdAnnual   String?  // Razorpay plan ID for annual billing
   isActive          Boolean   @default(true)

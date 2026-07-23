@@ -11,6 +11,7 @@ import useAuthStore from '../../store/authStore';
 import useNotificationStore from '../../store/notificationStore';
 import Logo from '../../components/Logo';
 import { isSuperAdmin, formatRole } from '../../lib/permissions';
+import UsageMeter from '../../components/billing/UsageMeter';
 
 const NAV = [
   { name: 'Overview', path: '/dashboard', icon: LayoutDashboard },
@@ -75,6 +76,7 @@ export default function DashboardLayout({ children }) {
             {currentUser.organization?.name || 'Demo Company'}
           </p>
         </div>
+        <UsageMeter />
         <div className="px-4 py-4 border-b border-border flex items-center gap-3">
           <div className="w-8 h-8 rounded-md bg-primary-light text-primary text-sm font-semibold flex items-center justify-center">
             {currentUser.name.charAt(0)}

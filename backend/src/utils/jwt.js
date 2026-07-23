@@ -1,43 +1,29 @@
 const jwt = require('jsonwebtoken');
+const {
+  jwtAccessSecret,
+  jwtRefreshSecret,
+  jwtAccessExpiresIn,
+  jwtRefreshExpiresIn,
+} = require('../config/secrets');
 
-const generateAccessToken = (payload) => {
-  return jwt.sign(
-    payload,
-    process.env.JWT_ACCESS_SECRET || 'jwt-access-secret-default-long-term-key-123',
-    {
-      expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
-    }
-  );
-};
+const generateAccessToken = (payload) =>
+  jwt.sign(payload, jwtAccessSecret(), { expiresIn: jwtAccessExpiresIn() });
 
-const generateRefreshToken = (payload) => {
-  return jwt.sign(
-    payload,
-    process.env.JWT_REFRESH_SECRET || 'jwt-refresh-secret-default-long-term-key-321',
-    {
-      expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
-    }
-  );
-};
+const generateRefreshToken = (payload) =>
+  jwt.sign(payload, jwtRefreshSecret(), { expiresIn: jwtRefreshExpiresIn() });
 
 const verifyAccessToken = (token) => {
   try {
-    return jwt.verify(
-      token,
-      process.env.JWT_ACCESS_SECRET || 'jwt-access-secret-default-long-term-key-123'
-    );
-  } catch (error) {
+    return jwt.verify(token, jwtAccessSecret());
+  } catch {
     return null;
   }
 };
 
 const verifyRefreshToken = (token) => {
   try {
-    return jwt.verify(
-      token,
-      process.env.JWT_REFRESH_SECRET || 'jwt-refresh-secret-default-long-term-key-321'
-    );
-  } catch (error) {
+    return jwt.verify(token, jwtRefreshSecret());
+  } catch {
     return null;
   }
 };

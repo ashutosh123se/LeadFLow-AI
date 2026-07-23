@@ -2,6 +2,7 @@ const axios = require('axios');
 const callQueue = require('../callQueue');
 const { prisma } = require('../../config/db');
 const exotelConfig = require('../../config/exotel');
+const sarvamConfig = require('../../config/sarvam');
 const logger = require('../../utils/logger');
 const { emitToOrg } = require('../../config/socket');
 const redisClient = require('../../config/redisClient');
@@ -100,7 +101,10 @@ callQueue.process(async (job) => {
     });
 
     // 5. Convert Greeting to Speech via Sarvam AI
-    const sarvamApiKey = process.env.SARVAM_API_KEY || 'your-sarvam-key';
+    const sarvamApiKey = sarvamConfig.apiKey;
+    if (!sarvamApiKey) {
+      throw new Error('SARVAM_API_KEY is not configured.');
+    }
     const speaker = org.aiCallerVoice || 'meera';
     const targetLangCode = lang === 'english' ? 'en-IN' : 'hi-IN';
 

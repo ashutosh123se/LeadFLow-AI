@@ -4,34 +4,15 @@ const { prisma } = require('../../config/db');
 const logger = require('../../utils/logger');
 const callQueue = require('../../queues/callQueue');
 const { emitToOrg } = require('../../config/socket');
+const verifyIntegrationWebhook = require('../../middleware/verifyIntegrationWebhook');
 
-// POST or GET /api/v1/webhooks/justdial/:token
 const handleJustDialWebhook = async (req, res) => {
-  const { token } = req.params;
+  const org = req.organization;
   const payload = { ...req.query, ...req.body };
-  logger.info(`Received Justdial lead payload. Token: ${token}, Payload: ${JSON.stringify(payload)}`);
 
   try {
-    // 1. Resolve organization by integration token
-    const integration = await prisma.integration.findFirst({
-      where: {
-        type: 'justdial',
-        webhookUrl: { contains: token },
-      },
-      include: { organization: true },
-    });
-
-    if (!integration || !integration.organization) {
-      logger.warn(`No active Justdial integration found for token: ${token}`);
-      return res.status(404).json({ error: 'Integration token invalid.' });
-    }
-
-    const org = integration.organization;
-
-    // 2. Extract Lead Data (Map Justdial standard fields)
     const phone = payload.mobile || payload.phone || payload.SENDER_MOBILE || payload.lead_mobile;
     if (!phone) {
-      logger.warn('Justdial webhook missing mobile number.');
       return res.status(400).json({ error: 'Phone number is required.' });
     }
 
@@ -39,14 +20,12 @@ const handleJustDialWebhook = async (req, res) => {
     const email = payload.email || payload.lead_email || null;
     const category = payload.category || payload.area || payload.requirement || payload.query || null;
 
-    // 3. Find default pipeline stage
     const defaultPipeline = await prisma.pipeline.findFirst({
       where: { organizationId: org.id, isDefault: true },
       include: { stages: { orderBy: { order: 'asc' } } },
     });
     const stageId = defaultPipeline?.stages?.[0]?.id || null;
 
-    // Check if lead already exists in org
     let lead = await prisma.lead.findFirst({
       where: {
         phone: { contains: phone.slice(-10) },
@@ -90,32 +69,24 @@ const handleJustDialWebhook = async (req, res) => {
       });
     }
 
-    // 4. Emit live update
     emitToOrg(org.id, 'lead:created', {
       leadId: lead.id,
       name: lead.name,
       source: 'JUSTDIAL',
     });
 
-    // 5. Trigger speed-to-lead AI Caller
-    if (isNewLead && org.aiCallerEnabled && org.aiCallsUsed < org.aiCallsLimit) {
-      await callQueue.add({
-        leadId: lead.id,
-        organizationId: org.id,
-      });
-      logger.info(`Speed-to-lead outbound dialer triggered for Justdial lead ${lead.id}`);
+    if (isNewLead && org.aiCallerEnabled) {
+      const UsageService = require('../billing/usage.service');
+      const usage = await UsageService.checkUsage(org.id, 'ai_calls', false);
+      if (usage.allowed) {
+        await callQueue.add({ leadId: lead.id, organizationId: org.id });
+      }
     }
 
-    // Trigger workflow automations
     const automationService = require('../automation/automation.service');
-    if (automationService && typeof automationService.triggerAutomations === 'function') {
-      await automationService.triggerAutomations(
-        'new_lead_created',
-        lead.id,
-        org.id,
-        { source: 'JUSTDIAL' }
-      );
-    }
+    await automationService.triggerAutomations('new_lead_created', lead.id, org.id, {
+      source: 'JUSTDIAL',
+    });
 
     return res.status(200).json({ success: true, leadId: lead.id });
   } catch (error) {
@@ -124,7 +95,6 @@ const handleJustDialWebhook = async (req, res) => {
   }
 };
 
-router.post('/:token', handleJustDialWebhook);
-router.get('/:token', handleJustDialWebhook);
+router.post('/:token', verifyIntegrationWebhook('justdial'), handleJustDialWebhook);
 
 module.exports = router;

@@ -1,5 +1,5 @@
 # Install Windows Task Scheduler job for LeadFlow daily commits
-# Runs every day at 10:30 AM — 1 commit + push per run
+# Runs every day at 10:30 AM — up to 3 queued commits + push per run
 
 param(
     [string]$Time = "10:30"
@@ -13,7 +13,7 @@ $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfil
 $trigger = New-ScheduledTaskTrigger -Daily -At $Time
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description "LeadFlow: one queued commit and push each day" -Force
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description "LeadFlow: up to 3 queued commits and push each day" -Force
 
 Write-Host "Scheduled task '$TaskName' installed."
 Write-Host "  Runs: daily at $Time"

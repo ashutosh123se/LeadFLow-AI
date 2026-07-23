@@ -1,6 +1,9 @@
 const http = require('http');
 require('dotenv').config();
 
+const { validateStartup } = require('./config/env');
+validateStartup();
+
 const app = require('./app');
 const { connectDB } = require('./config/db');
 const { initSocket } = require('./config/socket');

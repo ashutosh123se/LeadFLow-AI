@@ -128,31 +128,26 @@ class OrgService {
   }
 
   static async getUsage(orgId) {
-    const org = await prisma.organization.findUnique({
-      where: { id: orgId },
-      include: { planDefinition: true },
-    });
-
-    const userCount = await prisma.user.count({
-      where: { organizationId: orgId, isActive: true },
-    });
-
-    const leadCount = await prisma.lead.count({
-      where: { organizationId: orgId },
-    });
-
+    const BillingService = require('../billing/billing.service');
+    const data = await BillingService.getCurrentPlanUsage(orgId);
     return {
-      plan: org.plan,
-      planName: org.planDefinition?.name || `${org.plan} Plan`,
-      aiCallsUsed: org.aiCallsUsed,
-      aiCallsLimit: org.aiCallsLimit,
-      whatsappMsgUsed: org.whatsappMsgUsed,
-      whatsappMsgLimit: org.whatsappMsgLimit,
-      planExpiresAt: org.planExpiresAt,
-      userCount,
-      maxEmployees: org.planDefinition?.maxEmployees || 5,
-      leadCount,
-      maxLeads: org.planDefinition?.maxLeads || 500,
+      plan: data.plan.slug,
+      planName: data.plan.name,
+      aiCallsUsed: data.usage.aiCalls.used,
+      aiCallsLimit: data.usage.aiCalls.limit,
+      planLimit: data.usage.aiCalls.planLimit,
+      inOverage: data.usage.aiCalls.inOverage,
+      overageLeadsUsed: data.usage.aiCalls.overageLeadsUsed,
+      overageAmountPending: data.usage.aiCalls.overageAmountPending,
+      isTrialing: data.plan.isTrialing,
+      whatsappMsgUsed: data.usage.whatsappMessages.used,
+      whatsappMsgLimit: data.usage.whatsappMessages.limit,
+      planExpiresAt: data.planExpiresAt,
+      userCount: data.usage.employees.used,
+      maxEmployees: data.usage.employees.limit,
+      leadCount: data.usage.leads.used,
+      maxLeads: data.usage.leads.limit,
+      upgradePrompt: data.upgradePrompt,
     };
   }
 

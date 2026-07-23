@@ -30,6 +30,24 @@ class AutomationService {
   static async create(orgId, data) {
     const { name, description, trigger, steps } = data;
 
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      include: { planDefinition: true },
+    });
+
+    const currentCount = await prisma.automation.count({
+      where: { organizationId: orgId },
+    });
+
+    const { canCreateAutomation, getUpgradeSuggestion } = require('../billing/planFeatures');
+    if (!canCreateAutomation(org, currentCount)) {
+      throw new ApiError(
+        402,
+        'Automation workflows are not included on your plan. Upgrade to Growth for up to 3 workflows.',
+        { upgrade: getUpgradeSuggestion(org, 'automations') }
+      );
+    }
+
     return prisma.automation.create({
       data: {
         organizationId: orgId,
@@ -125,10 +143,19 @@ class AutomationService {
           }
         }
 
-        if (triggerConfig.type !== triggerType) continue;
+        const configuredType = triggerConfig.type;
+        const triggerMatches =
+          configuredType === triggerType ||
+          (triggerType === 'call_completed' && configuredType === 'score_updated') ||
+          (triggerType === 'score_updated' && configuredType === 'call_completed');
+
+        if (!triggerMatches) continue;
 
         // Custom condition filters (e.g. lead score threshold)
-        if (triggerType === 'score_updated' && triggerConfig.minScore) {
+        if (
+          (triggerType === 'score_updated' || triggerType === 'call_completed') &&
+          triggerConfig.minScore
+        ) {
           const score = parseInt(triggerData.score, 10) || 0;
           const minScore = parseInt(triggerConfig.minScore, 10) || 0;
           if (score < minScore) {
@@ -265,7 +292,6 @@ class AutomationService {
             variables: {
               name: lead.name,
               companyName: lead.company || 'your company',
-              otp: '123456', // dummy fallback
             },
           });
           logger.info(`Automation Action: Triggered email notification to ${toEmail}`);

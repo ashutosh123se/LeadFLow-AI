@@ -6,7 +6,7 @@ const AuditService = require('../audit/audit.service');
 const logger = require('../../utils/logger');
 
 let razorpay = null;
-if (razorpayConfig.keyId && razorpayConfig.keyId !== 'rzp_test_placeholder') {
+if (razorpayConfig.isConfigured()) {
   razorpay = new Razorpay({
     key_id: razorpayConfig.keyId,
     key_secret: razorpayConfig.keySecret,
@@ -29,35 +29,55 @@ class BillingService {
         {
           id: 'fallback-starter',
           slug: 'STARTER',
-          name: 'Starter Plan',
-          priceMonthly: 1999,
-          maxEmployees: 5,
-          maxAiCalls: 20,
-          maxWhatsappMsg: 100,
-          features: ['20 AI calls/month', 'Up to 5 team members', 'Basic CRM'],
+          name: 'Starter',
+          priceMonthly: 13500,
+          priceAnnual: 137700,
+          maxEmployees: 2,
+          maxAiCalls: 500,
+          maxWhatsappMsg: 200,
+          overageRatePerLead: 20,
+          trialDays: 14,
+          trialLeadCap: 25,
           isPopular: false,
+          features: ['500 AI leads/month', '2 team members', 'Website form only'],
         },
         {
           id: 'fallback-growth',
           slug: 'GROWTH',
-          name: 'Growth Plan',
-          priceMonthly: 3499,
-          maxEmployees: 15,
-          maxAiCalls: 75,
-          maxWhatsappMsg: 500,
-          features: ['75 AI calls/month', 'Up to 15 team members', 'Meta Ads integration'],
+          name: 'Growth',
+          priceMonthly: 37500,
+          priceAnnual: 382500,
+          maxEmployees: 5,
+          maxAiCalls: 1500,
+          maxWhatsappMsg: 1000,
+          overageRatePerLead: 18,
           isPopular: true,
+          features: ['1,500 AI leads/month', '5 team members', 'Facebook, IndiaMART, JustDial'],
         },
         {
-          id: 'fallback-pro',
-          slug: 'PRO',
-          name: 'Pro Plan',
-          priceMonthly: 5999,
-          maxEmployees: 9999,
-          maxAiCalls: 200,
-          maxWhatsappMsg: 2000,
-          features: ['200 AI calls/month', 'Unlimited team members', 'All integrations'],
+          id: 'fallback-scale',
+          slug: 'SCALE',
+          name: 'Scale',
+          priceMonthly: 110000,
+          priceAnnual: 1122000,
+          maxEmployees: 15,
+          maxAiCalls: 5000,
+          maxWhatsappMsg: 5000,
+          overageRatePerLead: 15,
           isPopular: false,
+          features: ['5,000 AI leads/month', '15 team members', 'Zapier + unlimited automations'],
+        },
+        {
+          id: 'fallback-enterprise',
+          slug: 'ENTERPRISE',
+          name: 'Enterprise',
+          priceMonthly: 0,
+          priceAnnual: null,
+          maxEmployees: 9999,
+          maxAiCalls: 5000,
+          overageRatePerLead: 0,
+          isPopular: false,
+          features: ['Custom volume & pricing', 'Dedicated account manager'],
         },
       ];
     }
@@ -78,6 +98,9 @@ class BillingService {
       throw new ApiError(404, 'Organization not found.');
     }
 
+    const UsageService = require('./usage.service');
+    const { getUpgradeSuggestion } = require('./planFeatures');
+
     const employeeCount = await prisma.user.count({
       where: { organizationId: orgId, isActive: true },
     });
@@ -86,21 +109,47 @@ class BillingService {
       where: { organizationId: orgId },
     });
 
+    const aiUsage = UsageService._resolveAiLimits(org);
+    const displayLimit = org.isTrialing && org.trialLeadCap != null ? org.trialLeadCap : org.aiCallsLimit;
+    const maxEmployees = org.planDefinition?.maxEmployees ?? 2;
+
+    const nearCap = aiUsage.percentage >= 80;
+    const atCap = aiUsage.used >= displayLimit;
+
     return {
       plan: {
         tier: org.plan,
         name: org.planDefinition?.name || `${org.plan} Plan`,
         slug: org.planDefinition?.slug || org.plan,
+        isTrialing: org.isTrialing,
+        overageRatePerLead: org.planDefinition?.overageRatePerLead ?? 0,
       },
       usage: {
-        aiCalls: { used: org.aiCallsUsed, limit: org.aiCallsLimit, percentage: Math.round((org.aiCallsUsed / org.aiCallsLimit) * 100) },
-        whatsappMessages: { used: org.whatsappMsgUsed, limit: org.whatsappMsgLimit, percentage: Math.round((org.whatsappMsgUsed / org.whatsappMsgLimit) * 100) },
-        employees: { used: employeeCount, limit: org.planDefinition?.maxEmployees || 5, percentage: Math.round((employeeCount / (org.planDefinition?.maxEmployees || 5)) * 100) },
+        aiCalls: {
+          used: org.aiCallsUsed,
+          limit: displayLimit,
+          planLimit: org.aiCallsLimit,
+          percentage: displayLimit > 0 ? Math.round((org.aiCallsUsed / displayLimit) * 100) : 0,
+          inOverage: aiUsage.inOverage,
+          overageLeadsUsed: org.overageLeadsUsed,
+          overageAmountPending: org.overageAmountPending,
+        },
+        whatsappMessages: {
+          used: org.whatsappMsgUsed,
+          limit: org.whatsappMsgLimit,
+          percentage: org.whatsappMsgLimit > 0 ? Math.round((org.whatsappMsgUsed / org.whatsappMsgLimit) * 100) : 0,
+        },
+        employees: {
+          used: employeeCount,
+          limit: maxEmployees,
+          percentage: maxEmployees > 0 ? Math.round((employeeCount / maxEmployees) * 100) : 0,
+        },
         leads: { used: leadCount, limit: org.planDefinition?.maxLeads || 500 },
       },
       planExpiresAt: org.planExpiresAt,
-      billingInterval: 'monthly',
+      billingInterval: org.billingInterval || 'monthly',
       razorpaySubId: org.razorpaySubId,
+      upgradePrompt: (nearCap || atCap) ? getUpgradeSuggestion(org, atCap ? 'lead_cap' : 'approaching_cap') : null,
     };
   }
 
@@ -125,14 +174,21 @@ class BillingService {
       throw new ApiError(400, 'Invalid subscription plan selection.');
     }
 
+    if (planSlug === 'ENTERPRISE') {
+      throw new ApiError(400, 'Enterprise plans require a custom quote. Contact sales@leadflow.ai.');
+    }
+
     const price = billingInterval === 'annual' ? planDef.priceAnnual : planDef.priceMonthly;
     const periodDays = billingInterval === 'annual' ? 365 : 30;
 
-    // Check if this is a free trial
     const isTrialEligible = planDef.trialDays > 0 && !org.razorpaySubId && org.plan === 'STARTER';
+    const trialLeadCap = isTrialEligible ? (planDef.trialLeadCap || 25) : null;
 
-    // Mock response if Razorpay is not configured
-    if (!razorpay) {
+    // Explicit sandbox only — never silent mock fallback
+    if (razorpayConfig.isMockMode()) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ApiError(500, 'BILLING_MOCK_MODE cannot be enabled in production.');
+      }
       const mockSubId = `sub_mock_${Date.now()}_${Math.random().toString(36).substring(7)}`;
       const periodEnd = new Date(Date.now() + periodDays * 24 * 60 * 60 * 1000);
       const trialEnd = isTrialEligible ? new Date(Date.now() + planDef.trialDays * 24 * 60 * 60 * 1000) : null;
@@ -147,6 +203,9 @@ class BillingService {
             aiCallsUsed: 0,
             whatsappMsgLimit: planDef.maxWhatsappMsg,
             whatsappMsgUsed: 0,
+            isTrialing: isTrialEligible,
+            trialLeadCap: trialLeadCap,
+            billingInterval,
             razorpaySubId: mockSubId,
             planExpiresAt: trialEnd || periodEnd,
           },
@@ -178,10 +237,18 @@ class BillingService {
 
       return {
         id: mockSubId,
-        paymentUrl: `${process.env.CLIENT_URL || 'https://app.leadflowai.com'}/dashboard?subscription=success`,
+        paymentUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/dashboard?subscription=success&mock=1`,
         mocked: true,
+        mockMode: true,
         isTrialEligible,
       };
+    }
+
+    if (!razorpay) {
+      throw new ApiError(
+        503,
+        'Razorpay is not configured. Set RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET or enable BILLING_MOCK_MODE=true for local sandbox testing only.'
+      );
     }
 
     try {
@@ -263,6 +330,10 @@ class BillingService {
       throw new ApiError(400, 'Invalid plan selection.');
     }
 
+    if (newPlanSlug === 'ENTERPRISE') {
+      throw new ApiError(400, 'Enterprise plans require a custom quote. Contact sales@leadflow.ai.');
+    }
+
     if (org.planDefinition?.slug === newPlanSlug) {
       throw new ApiError(400, 'You are already on this plan.');
     }
@@ -270,7 +341,10 @@ class BillingService {
     const isUpgrade = newPlanDef.priceMonthly > (org.planDefinition?.priceMonthly || 0);
 
     // For mock/dev mode, just update directly
-    if (!razorpay || !org.razorpaySubId || org.razorpaySubId.startsWith('sub_mock_')) {
+    if (razorpayConfig.isMockMode()) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ApiError(500, 'BILLING_MOCK_MODE cannot be enabled in production.');
+      }
       await prisma.organization.update({
         where: { id: orgId },
         data: {
@@ -278,6 +352,9 @@ class BillingService {
           planDefinitionId: newPlanDef.id,
           aiCallsLimit: newPlanDef.maxAiCalls,
           whatsappMsgLimit: newPlanDef.maxWhatsappMsg,
+          isTrialing: false,
+          trialLeadCap: null,
+          billingInterval,
         },
       });
 
@@ -293,7 +370,9 @@ class BillingService {
     }
 
     // Real Razorpay plan change — cancel old and create new
-    // (Razorpay doesn't natively support plan switching, so we cancel + re-create)
+    if (!razorpay) {
+      throw new ApiError(503, 'Razorpay is not configured.');
+    }
     try {
       await razorpay.subscriptions.cancel(org.razorpaySubId);
     } catch (err) {
@@ -315,7 +394,10 @@ class BillingService {
       throw new ApiError(400, 'No active recurring subscription found.');
     }
 
-    if (razorpay && !org.razorpaySubId.startsWith('sub_mock_')) {
+    if (!razorpayConfig.isMockMode()) {
+      if (!razorpay) {
+        throw new ApiError(503, 'Razorpay is not configured.');
+      }
       try {
         await razorpay.subscriptions.cancel(org.razorpaySubId);
       } catch (error) {
@@ -331,8 +413,8 @@ class BillingService {
       data: {
         plan: 'STARTER',
         planDefinitionId: starterPlan?.id || null,
-        aiCallsLimit: starterPlan?.maxAiCalls || 20,
-        whatsappMsgLimit: starterPlan?.maxWhatsappMsg || 100,
+        aiCallsLimit: starterPlan?.maxAiCalls || 500,
+        whatsappMsgLimit: starterPlan?.maxWhatsappMsg || 200,
         razorpaySubId: null,
       },
     });

@@ -1,29 +1,39 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Bot, CreditCard, Layers, Loader2, Copy } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { Bot, CreditCard, Layers, Loader2, Copy, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../../../lib/api';
+import { PRICING_PLANS, formatInr, monthlyDisplayPrice } from '../../../lib/plans';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Badge } from '../../../components/ui/Badge';
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState('ai-settings');
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'ai-settings');
   const [loading, setLoading] = useState(false);
+  const [billingLoading, setBillingLoading] = useState(null);
   const [aiEnabled, setAiEnabled] = useState(true);
   const [lang, setLang] = useState('hindi');
   const [voice, setVoice] = useState('meera');
   const [callingStart, setCallingStart] = useState('09:00');
   const [callingEnd, setCallingEnd] = useState('20:00');
   const [questions, setQuestions] = useState('');
-  const [usage, setUsage] = useState({ plan: 'STARTER', aiCallsUsed: 0, aiCallsLimit: 20, planExpiresAt: null });
+  const [usage, setUsage] = useState(null);
   const [integrations, setIntegrations] = useState([]);
+  const [billingInterval, setBillingInterval] = useState('monthly');
+
+  const loadUsage = async () => {
+    const useRes = await api.get('/billing/usage');
+    if (useRes.success) setUsage(useRes.data);
+  };
 
   useEffect(() => {
     (async () => {
       try {
-        const [orgRes, useRes, intRes] = await Promise.all([
-          api.get('/organizations'), api.get('/organizations/usage'), api.get('/integrations'),
+        const [orgRes, intRes] = await Promise.all([
+          api.get('/organizations'), api.get('/integrations'),
         ]);
         if (orgRes.success) {
           const o = orgRes.data;
@@ -34,11 +44,16 @@ export default function SettingsPage() {
           setCallingEnd(o.callingHoursEnd || '20:00');
           setQuestions(o.qualifyQuestions || '');
         }
-        if (useRes.success) setUsage(useRes.data);
         if (intRes.success) setIntegrations(intRes.data);
+        await loadUsage();
       } catch {}
     })();
   }, []);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab) setActiveTab(tab);
+  }, [searchParams]);
 
   const handleSaveAi = async (e) => {
     e.preventDefault();
@@ -56,11 +71,36 @@ export default function SettingsPage() {
     }
   };
 
+  const handleSelectPlan = async (planSlug) => {
+    if (planSlug === 'ENTERPRISE') {
+      window.location.href = 'mailto:sales@leadflow.ai?subject=LeadFlow-AI%20Enterprise';
+      return;
+    }
+    setBillingLoading(planSlug);
+    try {
+      const endpoint = !usage?.razorpaySubId ? '/billing/subscribe' : '/billing/change-plan';
+      const res = await api.post(endpoint, { planSlug, billingInterval });
+      if (res.data?.paymentUrl) {
+        window.location.href = res.data.paymentUrl;
+      } else {
+        toast.success(`Plan updated to ${planSlug}.`);
+        await loadUsage();
+      }
+    } catch (err) {
+      toast.error(err?.message || 'Billing update failed.');
+    } finally {
+      setBillingLoading(null);
+    }
+  };
+
   const tabs = [
     { id: 'ai-settings', label: 'AI dialer' },
     { id: 'billing', label: 'Billing' },
     { id: 'webhooks', label: 'Integrations' },
   ];
+
+  const aiCalls = usage?.usage?.aiCalls;
+  const usagePct = aiCalls?.limit ? Math.min(100, (aiCalls.used / aiCalls.limit) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -73,7 +113,7 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      <div className="max-w-3xl">
+      <div className="max-w-4xl">
         {activeTab === 'ai-settings' && (
           <form onSubmit={handleSaveAi} className="card p-6 space-y-6">
             <div className="flex justify-between items-center pb-4 border-b border-border">
@@ -121,44 +161,87 @@ export default function SettingsPage() {
           </form>
         )}
 
-        {activeTab === 'billing' && (
-          <div className="card p-6 space-y-6">
-            <div className="flex justify-between items-center pb-4 border-b border-border">
-              <h3 className="font-semibold flex items-center gap-2"><CreditCard className="w-4 h-4 text-primary" /> Billing</h3>
-              <Badge variant="trial">{usage.plan} plan</Badge>
-            </div>
-            <div>
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-muted">AI calls used</span>
-                <span className="font-medium tabular-nums">{usage.aiCallsUsed} / {usage.aiCallsLimit}</span>
+        {activeTab === 'billing' && usage && (
+          <div className="space-y-6">
+            <div className="card p-6 space-y-6">
+              <div className="flex justify-between items-center pb-4 border-b border-border">
+                <h3 className="font-semibold flex items-center gap-2"><CreditCard className="w-4 h-4 text-primary" /> Current plan</h3>
+                <Badge variant={usage.plan.isTrialing ? 'trial' : 'active'}>
+                  {usage.plan.name}{usage.plan.isTrialing ? ' · Trial' : ''}
+                </Badge>
               </div>
-              <div className="w-full bg-muted-surface h-2 rounded-full overflow-hidden">
-                <div className="bg-primary h-full rounded-full transition-all"
-                  style={{ width: `${Math.min(100, (usage.aiCallsUsed / usage.aiCallsLimit) * 100)}%` }} />
+              <div>
+                <div className="flex justify-between text-sm mb-2">
+                  <span className="text-muted">{usage.plan.isTrialing ? 'Trial leads used' : 'AI leads used this cycle'}</span>
+                  <span className="font-medium tabular-nums">{aiCalls.used} / {aiCalls.limit}</span>
+                </div>
+                <div className="w-full bg-muted-surface h-2 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full transition-all ${usagePct >= 90 ? 'bg-danger' : usagePct >= 80 ? 'bg-warning' : 'bg-primary'}`}
+                    style={{ width: `${usagePct}%` }} />
+                </div>
+                {aiCalls.inOverage && (
+                  <p className="text-xs text-muted mt-2">
+                    Overage this cycle: {aiCalls.overageLeadsUsed} leads · ₹{formatInr(aiCalls.overageAmountPending)} pending invoice
+                  </p>
+                )}
+                {usage.plan.overageRatePerLead > 0 && (
+                  <p className="text-xs text-muted mt-1">Overage rate: ₹{usage.plan.overageRatePerLead}/lead beyond {aiCalls.planLimit} included leads</p>
+                )}
+                {usage.planExpiresAt && (
+                  <p className="text-xs text-muted mt-2">Renews {new Date(usage.planExpiresAt).toLocaleDateString()}</p>
+                )}
               </div>
-              {usage.planExpiresAt && (
-                <p className="text-xs text-muted mt-2">Renews {new Date(usage.planExpiresAt).toLocaleDateString()}</p>
+              {usage.upgradePrompt && (
+                <div className="flex items-start gap-3 p-4 rounded-lg bg-warning-light border border-warning/20">
+                  <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium">{usage.upgradePrompt.message}</p>
+                    <p className="text-xs text-muted mt-1">Recommended: {usage.upgradePrompt.next} plan</p>
+                  </div>
+                </div>
               )}
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-              {[
-                { id: 'STARTER', label: 'Starter', price: '₹1,999', calls: '20', members: '5' },
-                { id: 'GROWTH', label: 'Growth', price: '₹3,499', calls: '75', members: '15', featured: true },
-                { id: 'PRO', label: 'Pro', price: '₹5,999', calls: '200', members: 'Unlimited' },
-              ].map((plan) => (
-                <div key={plan.id} className={`card p-5 flex flex-col ${plan.featured ? 'ring-1 ring-primary' : ''}`}>
-                  {plan.featured && <span className="text-xs font-semibold text-primary mb-2">Recommended</span>}
-                  <h5 className="font-semibold text-sm">{plan.label}</h5>
-                  <p className="text-2xl font-semibold mt-2">{plan.price}<span className="text-xs text-muted font-normal">/mo</span></p>
-                  <ul className="text-xs text-muted space-y-1.5 mt-4 flex-1">
-                    <li>{plan.calls} AI calls per month</li>
-                    <li>{plan.members} team members</li>
-                  </ul>
-                  <button className={`mt-4 w-full ${plan.featured ? 'btn-primary' : 'btn-secondary'} text-xs`}>
-                    Select {plan.label}
-                  </button>
-                </div>
-              ))}
+
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted">Billing cycle:</span>
+              <div className="inline-flex segmented">
+                <button type="button" onClick={() => setBillingInterval('monthly')}
+                  className={`segmented-item ${billingInterval === 'monthly' ? 'segmented-item-active' : ''}`}>Monthly</button>
+                <button type="button" onClick={() => setBillingInterval('annual')}
+                  className={`segmented-item ${billingInterval === 'annual' ? 'segmented-item-active' : ''}`}>Annual · 15% off</button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+              {PRICING_PLANS.map((plan) => {
+                const isCurrent = usage.plan.slug === plan.slug;
+                const displayPrice = monthlyDisplayPrice(plan, billingInterval);
+                return (
+                  <div key={plan.slug} className={`card p-5 flex flex-col ${plan.featured ? 'ring-1 ring-primary' : ''} ${isCurrent ? 'border-primary/40' : ''}`}>
+                    {plan.featured && <span className="text-xs font-semibold text-primary mb-2">Recommended</span>}
+                    {isCurrent && <span className="text-xs font-semibold text-muted mb-2">Current plan</span>}
+                    <h5 className="font-semibold text-sm">{plan.name}</h5>
+                    <p className="text-xl font-semibold mt-2">
+                      {displayPrice != null ? `₹${formatInr(displayPrice)}` : 'Custom'}
+                      {displayPrice != null && <span className="text-xs text-muted font-normal">/mo</span>}
+                    </p>
+                    <ul className="text-xs text-muted space-y-1.5 mt-4 flex-1">
+                      <li>{plan.leads}</li>
+                      <li>{plan.seats}</li>
+                      <li>Overage: {plan.overage}</li>
+                    </ul>
+                    <button
+                      type="button"
+                      disabled={isCurrent || billingLoading === plan.slug}
+                      onClick={() => handleSelectPlan(plan.slug)}
+                      className={`mt-4 w-full text-xs ${plan.featured && !isCurrent ? 'btn-primary' : 'btn-secondary'}`}
+                    >
+                      {billingLoading === plan.slug && <Loader2 className="w-3 h-3 animate-spin inline mr-1" />}
+                      {isCurrent ? 'Current plan' : plan.slug === 'ENTERPRISE' ? 'Contact sales' : `Switch to ${plan.name}`}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

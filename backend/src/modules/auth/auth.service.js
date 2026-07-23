@@ -45,10 +45,12 @@ class AuthService {
           industry,
           plan: 'STARTER',
           planDefinitionId: starterPlan?.id || null,
-          aiCallsLimit: starterPlan?.maxAiCalls || 20,
-          whatsappMsgLimit: starterPlan?.maxWhatsappMsg || 100,
+        aiCallsLimit: starterPlan?.maxAiCalls || 500,
+          whatsappMsgLimit: starterPlan?.maxWhatsappMsg || 200,
           aiCallsUsed: 0,
           whatsappMsgUsed: 0,
+          isTrialing: true,
+          trialLeadCap: starterPlan?.trialLeadCap || 25,
           aiCallerLanguage: aiCallerLanguage || 'hindi',
           aiCallerVoice: aiCallerVoice || 'meera',
           onboardingStep: 0,
@@ -135,7 +137,7 @@ class AuthService {
               name: auto.name,
               trigger: auto.trigger,
               steps: auto.steps,
-              isActive: auto.isActive,
+              isActive: false,
             },
           })
         )

@@ -11,6 +11,14 @@ const { emitToOrg } = require('../../config/socket');
 const whatsappQueue = require('../../queues/whatsappQueue');
 const callQueue = require('../../queues/callQueue');
 const emailQueue = require('../../queues/emailQueue');
+const verifyExotelWebhook = require('../../middleware/verifyExotelWebhook');
+const { resolvePostCallAnalysis } = require('../../utils/callScoring');
+const UsageService = require('../billing/usage.service');
+
+router.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  return verifyExotelWebhook(req, res, next);
+});
 
 // Helper: Generate TTS audio base64 via Sarvam AI
 const generateSarvamTTS = async (text, language, voice = 'meera') => {
@@ -165,7 +173,22 @@ const handleRecordingCallback = async (req, res) => {
     }
 
     if (!userSpeech) {
-      userSpeech = call.language === 'hindi' ? 'Haan, boliye.' : 'Yes, go ahead.';
+      logger.error(`Deepgram returned empty transcript for call ${callId}. Marking NEEDS_REVIEW.`);
+      await prisma.call.update({
+        where: { id: callId },
+        data: {
+          status: 'NEEDS_REVIEW',
+          needsManualReview: true,
+          endedAt: new Date(),
+        },
+      });
+      emitToOrg(call.organizationId, 'call:failed', {
+        leadId: call.leadId,
+        callId,
+        reason: 'Speech transcription failed — manual review required.',
+      });
+      res.type('text/xml');
+      return res.send('<Response><Hangup/></Response>');
     }
 
     // Save lead turn to state transcript
@@ -358,7 +381,7 @@ router.post('/status/:callId', async (req, res) => {
           organizationId: call.organizationId,
           leadId: call.leadId,
           phone: call.lead.phone,
-          templateName: 'missed_call',
+          templateName: 'call_missed',
           variables: [call.lead.name],
         });
 
@@ -400,20 +423,10 @@ const processPostCall = async (callId) => {
       });
     }
 
-    let analysis = {
-      budget: null,
-      timeline: null,
-      requirement: null,
-      location: null,
-      decisionMaker: null,
-      score: 50,
-      scoreLabel: 'WARM',
-      scoreReason: 'Call completed, standard score mapped.',
-      summary: 'Voice qualifier call completed.',
-    };
-
-    if (openaiConfig.apiKey && rawTranscript) {
-      try {
+    const analysis = await resolvePostCallAnalysis({
+      rawTranscript,
+      openaiApiKey: openaiConfig.apiKey,
+      callOpenAi: async (transcript) => {
         const prompt = `Analyze this speed-to-lead qualification transcript. Extract qualification details and score the lead from 0 to 100. Return ONLY valid JSON matching this schema:
         {
           "budget": "string or null representing the lead's budget",
@@ -426,7 +439,7 @@ const processPostCall = async (callId) => {
           "scoreReason": "detailed explanation of why this score was assigned",
           "summary": "2 sentence summary of the conversation"
         }
-        Transcript:\n${rawTranscript}`;
+        Transcript:\n${transcript}`;
 
         const response = await axios.post(
           'https://api.openai.com/v1/chat/completions',
@@ -443,16 +456,14 @@ const processPostCall = async (callId) => {
           }
         );
 
-        analysis = JSON.parse(response.data?.choices?.[0]?.message?.content || '{}');
-      } catch (err) {
-        logger.error('OpenAI call scoring analysis failed:', err.message);
-      }
-    }
+        return response.data?.choices?.[0]?.message?.content;
+      },
+    });
 
+    const isScored = ['HOT', 'WARM', 'COLD'].includes(analysis.scoreLabel);
     const isQualified = analysis.scoreLabel === 'HOT' || analysis.scoreLabel === 'WARM';
 
     await prisma.$transaction([
-      // 1. Update Lead details
       prisma.lead.update({
         where: { id: call.leadId },
         data: {
@@ -462,29 +473,23 @@ const processPostCall = async (callId) => {
           location: analysis.location || call.lead.location,
           decisionMaker: analysis.decisionMaker ?? call.lead.decisionMaker,
           score: analysis.score,
-          scoreLabel: analysis.scoreLabel,
+          scoreLabel: isScored ? analysis.scoreLabel : 'NEEDS_REVIEW',
           scoreReason: analysis.scoreReason,
-          isQualified,
-          status: isQualified ? 'QUALIFIED' : 'CONTACTED',
-          scoredAt: new Date(),
+          isQualified: isScored ? isQualified : false,
+          status: isScored ? (isQualified ? 'QUALIFIED' : 'CONTACTED') : 'CONTACTED',
+          scoredAt: isScored ? new Date() : null,
         },
       }),
-      // 2. Update Call details
       prisma.call.update({
         where: { id: callId },
         data: {
           summary: analysis.summary,
           extractedData: analysis,
           aiScore: analysis.score,
-          aiScoreLabel: analysis.scoreLabel,
+          aiScoreLabel: isScored ? analysis.scoreLabel : 'NEEDS_REVIEW',
           aiScoreReason: analysis.scoreReason,
-        },
-      }),
-      // 3. Increment usage limit
-      prisma.organization.update({
-        where: { id: call.organizationId },
-        data: {
-          aiCallsUsed: { increment: 1 },
+          status: analysis.needsManualReview ? 'NEEDS_REVIEW' : 'COMPLETED',
+          needsManualReview: Boolean(analysis.needsManualReview),
         },
       }),
       // 4. Activity entry
@@ -493,13 +498,16 @@ const processPostCall = async (callId) => {
           organizationId: call.organizationId,
           leadId: call.leadId,
           type: 'call',
-          description: `AI outbound call complete. Qualification: ${analysis.scoreLabel} (${analysis.score}/100)`,
+          description: analysis.needsManualReview
+            ? `AI outbound call complete — manual review required: ${analysis.scoreReason}`
+            : `AI outbound call complete. Qualification: ${analysis.scoreLabel} (${analysis.score}/100)`,
           metadata: analysis,
         },
       }),
     ]);
 
-    // 5. Emit socket event
+    await UsageService.incrementUsage(call.organizationId, 'ai_calls', 1);
+
     emitToOrg(call.organizationId, 'call:completed', {
       callId,
       leadId: call.leadId,
@@ -512,11 +520,19 @@ const processPostCall = async (callId) => {
     const automationService = require('../automation/automation.service');
     if (automationService && typeof automationService.triggerAutomations === 'function') {
       await automationService.triggerAutomations(
-        'score_updated',
+        'call_completed',
         call.leadId,
         call.organizationId,
         { score: analysis.score, scoreLabel: analysis.scoreLabel }
       );
+      if (isScored) {
+        await automationService.triggerAutomations(
+          'score_updated',
+          call.leadId,
+          call.organizationId,
+          { score: analysis.score, scoreLabel: analysis.scoreLabel }
+        );
+      }
     }
 
     // 7. Send post-call summary email and follow-up templates
@@ -533,7 +549,7 @@ const processPostCall = async (callId) => {
     });
 
     // If hot lead, queue proposal template
-    if (analysis.scoreLabel === 'HOT') {
+    if (isScored && analysis.scoreLabel === 'HOT') {
       await whatsappQueue.add({
         organizationId: call.organizationId,
         leadId: call.leadId,

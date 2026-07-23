@@ -2,6 +2,7 @@ const axios = require('axios');
 const whatsappQueue = require('../whatsappQueue');
 const { prisma } = require('../../config/db');
 const whatsappConfig = require('../../config/whatsapp');
+const UsageService = require('../../modules/billing/usage.service');
 const logger = require('../../utils/logger');
 const { emitToOrg } = require('../../config/socket');
 
@@ -19,8 +20,10 @@ whatsappQueue.process(async (job) => {
       throw new Error(`Organization ${organizationId} not found`);
     }
 
+    await UsageService.checkUsage(organizationId, 'whatsapp_messages', true);
+
     const waToken = org.whatsappToken || whatsappConfig.token;
-    const waPhoneId = org.whatsappPhoneId || 'your-default-whatsapp-phone-id';
+    const waPhoneId = org.whatsappPhoneId || whatsappConfig.phoneNumberId;
 
     if (!waToken || !waPhoneId) {
       throw new Error('WhatsApp Business API credentials are not configured.');
@@ -97,6 +100,8 @@ whatsappQueue.process(async (job) => {
       templateName,
       status: 'sent',
     });
+
+    await UsageService.incrementUsage(organizationId, 'whatsapp_messages', 1);
 
     logger.info(`WhatsApp message successfully sent. Meta SID: ${waMessageId}`);
   } catch (error) {

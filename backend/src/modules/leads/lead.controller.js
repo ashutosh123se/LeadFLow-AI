@@ -16,7 +16,12 @@ const getLeads = asyncHandler(async (req, res) => {
     dateTo: req.query.dateTo,
   };
 
-  const { total, data } = await LeadService.getAll(req.organizationId, filters, { page, limit, skip });
+  const { total, data } = await LeadService.getAll(
+    req.organizationId,
+    filters,
+    { page, limit, skip },
+    req.agentLeadFilter || {}
+  );
   const meta = getPaginationMeta(total, page, limit);
 
   res.status(200).json(
@@ -25,7 +30,7 @@ const getLeads = asyncHandler(async (req, res) => {
 });
 
 const getLead = asyncHandler(async (req, res) => {
-  const lead = await LeadService.getById(req.organizationId, req.params.id);
+  const lead = await LeadService.getById(req.organizationId, req.params.id, req.agentLeadFilter || {});
   res.status(200).json(
     new ApiResponse(200, lead, 'Lead details fetched successfully.')
   );

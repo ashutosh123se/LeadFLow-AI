@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Search, PhoneCall, Send, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { api } from '../../../lib/api';
+import { api, isDemoMode } from '../../../lib/api';
 import { getAllDemoLeads, DEMO_TEAM } from '../../../lib/demoData';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Badge } from '../../../components/ui/Badge';
@@ -19,27 +19,54 @@ export default function LeadsPage() {
   const [team, setTeam] = useState([]);
 
   useEffect(() => {
-    setLoading(true);
-    setTimeout(() => {
-      let data = getAllDemoLeads();
-      if (search) {
-        const q = search.toLowerCase();
-        data = data.filter((l) => l.name?.toLowerCase().includes(q) || l.phone?.includes(q));
+    (async () => {
+      setLoading(true);
+      if (isDemoMode()) {
+        let data = getAllDemoLeads();
+        if (search) {
+          const q = search.toLowerCase();
+          data = data.filter((l) => l.name?.toLowerCase().includes(q) || l.phone?.includes(q));
+        }
+        if (scoreLabel) data = data.filter((l) => l.scoreLabel === scoreLabel);
+        setLeads(data);
+        setTeam(DEMO_TEAM);
+        setLoading(false);
+        return;
       }
-      if (scoreLabel) data = data.filter((l) => l.scoreLabel === scoreLabel);
-      setLeads(data);
-      setLoading(false);
-    }, 200);
-    setTeam(DEMO_TEAM);
+      try {
+        const params = new URLSearchParams();
+        if (search) params.set('search', search);
+        if (scoreLabel) params.set('scoreLabel', scoreLabel);
+        params.set('limit', '100');
+        const res = await api.get(`/leads?${params.toString()}`);
+        if (res.success) setLeads(res.data || []);
+        const users = await api.get('/users');
+        if (users.success) setTeam(users.data || []);
+      } catch {
+        setLeads(getAllDemoLeads());
+        setTeam(DEMO_TEAM);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [search, scoreLabel]);
 
-  const handleSelectLead = (lead) => {
+  const handleSelectLead = async (lead) => {
     setSelectedLead(lead);
-    setTimeline([
-      { id: 1, description: 'Lead captured via website', createdAt: lead.createdAt },
-      { id: 2, description: 'AI qualifier call queued', createdAt: new Date(new Date(lead.createdAt).getTime() + 10000).toISOString() },
-      { id: 3, description: 'Call completed. Intent extracted.', createdAt: new Date(new Date(lead.createdAt).getTime() + 50000).toISOString() },
-    ]);
+    if (isDemoMode()) {
+      setTimeline([
+        { id: 1, description: 'Lead captured via website', createdAt: lead.createdAt },
+        { id: 2, description: 'AI qualifier call queued', createdAt: new Date(new Date(lead.createdAt).getTime() + 10000).toISOString() },
+        { id: 3, description: 'Call completed. Intent extracted.', createdAt: new Date(new Date(lead.createdAt).getTime() + 50000).toISOString() },
+      ]);
+      return;
+    }
+    try {
+      const res = await api.get(`/leads/${lead.id}/timeline`);
+      if (res.success) setTimeline(res.data || []);
+    } catch {
+      setTimeline([]);
+    }
   };
 
   const handleManualCall = () => toast.success('AI qualifier call queued.');

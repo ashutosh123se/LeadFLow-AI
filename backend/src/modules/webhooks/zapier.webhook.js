@@ -4,52 +4,15 @@ const { prisma } = require('../../config/db');
 const logger = require('../../utils/logger');
 const callQueue = require('../../queues/callQueue');
 const { emitToOrg } = require('../../config/socket');
-const { decrypt } = require('../../utils/encryption');
+const verifyIntegrationWebhook = require('../../middleware/verifyIntegrationWebhook');
 
-// POST /api/v1/webhooks/zapier/:token
-router.post('/:token', async (req, res) => {
-  const { token } = req.params;
+router.post('/:token', verifyIntegrationWebhook('zapier'), async (req, res) => {
+  const org = req.organization;
   const payload = req.body;
-  logger.info(`Received Zapier webhook. Token URL: ${token}, Payload: ${JSON.stringify(payload)}`);
 
   try {
-    let org = null;
-
-    // 1. Resolve organization by decrypted body token if present
-    if (payload.orgToken) {
-      try {
-        const decryptedId = decrypt(payload.orgToken);
-        if (decryptedId) {
-          org = await prisma.organization.findUnique({
-            where: { id: decryptedId },
-          });
-        }
-      } catch (decErr) {
-        logger.error('Failed to decrypt orgToken in Zapier body:', decErr.message);
-      }
-    }
-
-    // 2. Fallback: Resolve by integration token from URL
-    if (!org && token) {
-      const integration = await prisma.integration.findFirst({
-        where: {
-          type: 'zapier',
-          webhookUrl: { contains: token },
-        },
-        include: { organization: true },
-      });
-      org = integration?.organization || null;
-    }
-
-    if (!org) {
-      logger.warn(`No organization resolved for Zapier payload. Token: ${token}`);
-      return res.status(401).json({ error: 'Unauthorized. Invalid organization token.' });
-    }
-
-    // 3. Extract Lead Fields from flexible Zapier schema
     const phone = payload.phone || payload.mobile || payload.Phone || payload.Mobile || payload.phoneNumber;
     if (!phone) {
-      logger.warn('Zapier payload missing phone number.');
       return res.status(400).json({ error: 'Phone number is required.' });
     }
 
@@ -59,14 +22,12 @@ router.post('/:token', async (req, res) => {
     const requirement = payload.requirement || payload.notes || payload.message || payload.query || null;
     const budget = payload.budget || payload.Budget || null;
 
-    // 4. Find default pipeline stage
     const defaultPipeline = await prisma.pipeline.findFirst({
       where: { organizationId: org.id, isDefault: true },
       include: { stages: { orderBy: { order: 'asc' } } },
     });
     const stageId = defaultPipeline?.stages?.[0]?.id || null;
 
-    // Check if lead already exists
     let lead = await prisma.lead.findFirst({
       where: {
         phone: { contains: phone.slice(-10) },
@@ -85,7 +46,7 @@ router.post('/:token', async (req, res) => {
           phone,
           email,
           company,
-          source: 'API', // Zapier or external API
+          source: 'API',
           requirement,
           budget,
           consentGiven: true,
@@ -113,32 +74,24 @@ router.post('/:token', async (req, res) => {
       });
     }
 
-    // 5. Socket broadcast
     emitToOrg(org.id, 'lead:created', {
       leadId: lead.id,
       name: lead.name,
       source: 'API',
     });
 
-    // 6. Trigger speed-to-lead outbound call
-    if (isNewLead && org.aiCallerEnabled && org.aiCallsUsed < org.aiCallsLimit) {
-      await callQueue.add({
-        leadId: lead.id,
-        organizationId: org.id,
-      });
-      logger.info(`Speed-to-lead outbound dialer triggered for Zapier lead ${lead.id}`);
+    if (isNewLead && org.aiCallerEnabled) {
+      const UsageService = require('../billing/usage.service');
+      const usage = await UsageService.checkUsage(org.id, 'ai_calls', false);
+      if (usage.allowed) {
+        await callQueue.add({ leadId: lead.id, organizationId: org.id });
+      }
     }
 
-    // Trigger workflow automations
     const automationService = require('../automation/automation.service');
-    if (automationService && typeof automationService.triggerAutomations === 'function') {
-      await automationService.triggerAutomations(
-        'new_lead_created',
-        lead.id,
-        org.id,
-        { source: 'API' }
-      );
-    }
+    await automationService.triggerAutomations('new_lead_created', lead.id, org.id, {
+      source: 'API',
+    });
 
     return res.status(200).json({ success: true, leadId: lead.id });
   } catch (error) {

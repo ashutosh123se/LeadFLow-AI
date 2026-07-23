@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { TrendingUp, PhoneCall, Clock, CheckCircle2, Users, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { api } from '../../lib/api';
+import { api, isDemoMode } from '../../lib/api';
 import {
   DEMO_DASHBOARD_STATS,
   DEMO_ACTIVITIES,
@@ -30,7 +30,25 @@ export default function DashboardPage() {
   const [phone, setPhone] = useState('');
   const [requirement, setRequirement] = useState('');
 
-  useEffect(() => {}, []);
+  useEffect(() => {
+    (async () => {
+      if (isDemoMode()) return;
+      try {
+        const [overview, sources, pipeline, response] = await Promise.all([
+          api.get('/analytics/overview'),
+          api.get('/analytics/sources'),
+          api.get('/analytics/pipeline'),
+          api.get('/analytics/response-time'),
+        ]);
+        if (overview.success) setStats((prev) => ({ ...prev, ...overview.data }));
+        if (sources.success) setSources(sources.data?.breakdown || sources.data || []);
+        if (pipeline.success) setFunnel(pipeline.data?.stages || pipeline.data || []);
+        if (response.success) setResponseTime(response.data || { avgSeconds: 0 });
+      } catch (err) {
+        console.error('Dashboard analytics fetch failed:', err);
+      }
+    })();
+  }, []);
 
   const handleCreateLead = async (e) => {
     e.preventDefault();
